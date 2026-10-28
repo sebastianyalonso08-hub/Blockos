@@ -150,3 +150,27 @@ create policy "Users can create support requests" on public.support_requests for
 drop policy if exists "Users can read own support requests" on public.support_requests;
 create policy "Users can read own support requests" on public.support_requests for select to authenticated using (auth.uid() = user_id);
 grant insert, select on public.support_requests to authenticated;
+
+-- V6 classic wardrobe additions: T-Shirts, body-part colors and classic catalog entries.
+alter table public.profiles add column if not exists body_colors jsonb not null default '{"head":"#ffcc33","torso":"#1479bd","leftArm":"#ffcc33","rightArm":"#ffcc33","leftLeg":"#39834b","rightLeg":"#39834b"}'::jsonb;
+alter table public.catalog_items drop constraint if exists catalog_items_category_check;
+alter table public.catalog_items add constraint catalog_items_category_check check (category in ('face','head','hat','tshirt','shirt','pants'));
+insert into public.catalog_items(id,name,category,description,price,image_url) values
+ ('face-silly','Silly Face','face','A playful classic face.',8,'/assets/faces/silly.svg'),
+ ('hat-top','Black Top Hat','hat','A classic black top hat.',25,''),
+ ('hat-crown','Golden Crown','hat','A golden crown accessory.',50,''),
+ ('hat-party','Party Cone','hat','A colorful party hat.',15,''),
+ ('hat-glasses','Classic Glasses','hat','Black frame glasses.',18,''),
+ ('hat-winter','Winter Beanie','hat','A rounded winter hat.',20,''),
+ ('hat-halo','Golden Halo','hat','A floating golden ring.',35,''),
+ ('shirt-red','Red Classic Shirt','shirt','A red long-sleeved classic shirt.',15,''),
+ ('shirt-black','Black Classic Shirt','shirt','A black classic shirt.',20,''),
+ ('tshirt-logo','Blockos Logo T-Shirt','tshirt','A short-sleeved logo tee.',10,''),
+ ('tshirt-green','Green T-Shirt','tshirt','A green short-sleeved tee.',10,''),
+ ('tshirt-yellow','Yellow T-Shirt','tshirt','A yellow short-sleeved tee.',10,''),
+ ('pants-blue','Blue Pants','pants','Classic blue trousers.',12,''),
+ ('pants-black','Black Pants','pants','Classic black trousers.',15,'')
+on conflict (id) do update set name=excluded.name,category=excluded.category,description=excluded.description,price=excluded.price;
+
+alter table public.avatar_equipped drop constraint if exists avatar_equipped_category_check;
+alter table public.avatar_equipped add constraint avatar_equipped_category_check check (category in ('face','head','hat','tshirt','shirt','pants'));
