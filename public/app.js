@@ -1,141 +1,28 @@
 (() => {
-  const $ = (id) => document.getElementById(id);
-  const modal = $('authModal'), form = $('authForm'), message = $('authMessage');
-  let mode = 'signup', supabase = null, currentUser = null, demoUser = null;
-  const config = window.BLOCKOS_CONFIG || {};
-  const configured = Boolean(config.SUPABASE_URL && config.SUPABASE_ANON_KEY && window.supabase);
-  if (configured) {
-    try { supabase = window.supabase.createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY); }
-    catch (e) { console.error('No se pudo inicializar Supabase', e); }
-  }
-  function setMessage(text, error=false) { message.textContent = text; message.classList.toggle('error', error); }
-  function showModal(nextMode='signup') {
-    setMode(nextMode); modal.classList.remove('hidden'); document.body.style.overflow='hidden';
-    setTimeout(() => $(nextMode === 'signup' ? 'username' : 'email').focus(), 80);
-  }
-  function closeModal() { modal.classList.add('hidden'); document.body.style.overflow=''; setMessage(''); form.reset(); }
-  function setMode(next) {
-    mode=next; const signup=mode==='signup';
-    $('signupTab').classList.toggle('selected',signup); $('loginTab').classList.toggle('selected',!signup);
-    $('authTitle').textContent=signup?'Únete a la aventura':'Qué bueno verte de nuevo';
-    $('authSubtitle').textContent=signup?'Crea tu cuenta gratis para comenzar.':'Inicia sesión para volver a tu mundo.';
-    $('username').classList.toggle('hidden',!signup); $('username').required=signup;
-    $('usernameLabel').classList.toggle('hidden',!signup);
-    $('password').autocomplete=signup?'new-password':'current-password';
-    $('authSubmit').textContent=signup?'Crear cuenta':'Iniciar sesión';
-    setMessage('');
-  }
-  function showToast(text) { const t=$('toast');t.textContent=text;t.classList.remove('hidden');clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>t.classList.add('hidden'),3600); }
-  function displayUser(user, username) {
-    currentUser=user||null;
-    const name=username || user?.user_metadata?.username || user?.email?.split('@')[0] || 'Invitado';
-    $('signedInAs').textContent=user?'Hola, '+name:'';
-    $('openAuth').textContent=user?'Cerrar sesión':'Iniciar sesión';
-    $('headerSignup').classList.toggle('hidden',!!user);
-    $('profileName').textContent=name;
-    $('profileMessage').textContent=user?'Tu perfil está activo. ¡Bienvenido a Blockos Ville!':'Inicia sesión para ver tu perfil.';
-    $('profileAction').textContent=user?'Cerrar sesión':'Crear mi cuenta';
-    $('heroSignup').textContent=user?'¡Ver mi perfil!':'¡Únete gratis!';
-    if (user) closeModal();
-  }
-  async function refreshSession() {
-    if (supabase) {
-      const {data,error}=await supabase.auth.getSession();
-      if(error) console.error(error);
-      if(data?.session) {
-        const user=data.session.user;
-        let name=user.user_metadata?.username;
-        const {data:profile}=await supabase.from('profiles').select('username').eq('id',user.id).maybeSingle();
-        displayUser(user,profile?.username||name);
-      } else displayUser(null);
-    } else {
-      const saved=localStorage.getItem('blockos_demo_user');
-      if(saved) { try { demoUser=JSON.parse(saved); displayUser({email:demoUser.email,user_metadata:{username:demoUser.username}},demoUser.username); } catch { localStorage.removeItem('blockos_demo_user'); } }
-      else displayUser(null);
-    }
-  }
-  form.addEventListener('submit',async e=>{
-    e.preventDefault(); const email=$('email').value.trim().toLowerCase(), password=$('password').value;
-    const username=$('username').value.trim();
-    $('authSubmit').disabled=true; $('authSubmit').textContent='Un momento…'; setMessage('');
-    try {
-      if(mode==='signup' && !/^[a-zA-Z0-9_]{3,20}$/.test(username)) throw new Error('El nombre debe tener 3–20 caracteres: letras, números o guion bajo.');
-      if(supabase) {
-        if(mode==='signup') {
-          const {data,error}=await supabase.auth.signUp({email,password,options:{data:{username}}});
-          if(error) throw error;
-          if(data.session) { displayUser(data.user,username); showToast('¡Tu cuenta está lista!'); }
-          else setMessage('Cuenta creada. Revisa tu correo para confirmar el registro.');
-        } else {
-          const {data,error}=await supabase.auth.signInWithPassword({email,password});
-          if(error) throw error;
-          displayUser(data.user); showToast('¡Has iniciado sesión!');
-        }
-      } else {
-        // Demo mode only: never use this local-only account store as production authentication.
-        const users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');
-        if(mode==='signup') {
-          if(users[email]) throw new Error('Ya existe una cuenta de demostración con ese correo.');
-          users[email]={username,password}; localStorage.setItem('blockos_demo_users',JSON.stringify(users));
-          demoUser={email,username}; localStorage.setItem('blockos_demo_user',JSON.stringify(demoUser));
-          displayUser({email,user_metadata:{username}},username); showToast('Cuenta de demostración creada en este navegador.');
-        } else {
-          if(!users[email]||users[email].password!==password) throw new Error('Correo o contraseña incorrectos en el modo de demostración.');
-          demoUser={email,username:users[email].username};localStorage.setItem('blockos_demo_user',JSON.stringify(demoUser));
-          displayUser({email,user_metadata:{username:demoUser.username}},demoUser.username);showToast('Sesión de demostración iniciada.');
-        }
-      }
-    } catch(err) { setMessage(err.message||'No se pudo completar la solicitud. Inténtalo otra vez.',true); }
-    finally { $('authSubmit').disabled=false; $('authSubmit').textContent=mode==='signup'?'Crear cuenta':'Iniciar sesión'; }
-  });
-  async function signOut() {
-    if(supabase) { const {error}=await supabase.auth.signOut();if(error){showToast(error.message);return;} }
-    demoUser=null;localStorage.removeItem('blockos_demo_user');displayUser(null);showToast('Sesión cerrada.');
-  }
-  $('openAuth').addEventListener('click',()=>currentUser?signOut():showModal('login'));
-  $('headerSignup').addEventListener('click',()=>showModal('signup'));
-  $('heroSignup').addEventListener('click',()=>currentUser?document.querySelector('#profile').scrollIntoView({behavior:'smooth'}):showModal('signup'));
-  $('profileAction').addEventListener('click',()=>currentUser?signOut():showModal('signup'));
-  $('profileNav').addEventListener('click',e=>{e.preventDefault();document.querySelector('#profile').scrollIntoView({behavior:'smooth'});});
-  $('closeAuth').addEventListener('click',closeModal);
-  $('signupTab').addEventListener('click',()=>setMode('signup')); $('loginTab').addEventListener('click',()=>setMode('login'));
-  modal.addEventListener('click',e=>{if(e.target===modal)closeModal();});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.classList.contains('hidden'))closeModal();});
-  $('mobileMenu').addEventListener('click',()=>$('main-nav')?.classList.toggle('open'));
-  const nav=document.querySelector('.main-nav'); $('mobileMenu').addEventListener('click',()=>nav.classList.toggle('open'));
-  nav.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>nav.classList.remove('open')));
-  if(supabase) supabase.auth.onAuthStateChange((_event,session)=>{ if(!session) displayUser(null); });
-  refreshSession();
-  // 3D avatar: simple original block character, rendered directly in the browser.
-  const stages=[$('heroAvatar'),$('profileAvatar')];
-  function makeAvatar(stage) {
-    if(!stage||!window.THREE) { if(stage) stage.textContent=''; return; }
-    const scene=new THREE.Scene(); scene.background=null;
-    const camera=new THREE.PerspectiveCamera(32,1,.1,100);camera.position.set(4.5,3.4,6.5);camera.lookAt(0,1.35,0);
-    const renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));renderer.outputColorSpace=THREE.SRGBColorSpace;
-    stage.appendChild(renderer.domElement);
-    scene.add(new THREE.HemisphereLight(0xffffff,0x5d7a99,2.1));
-    const key=new THREE.DirectionalLight(0xffffff,2.5);key.position.set(3,6,4);scene.add(key);
-    const avatar=new THREE.Group();scene.add(avatar);
-    const mat=(color)=>new THREE.MeshStandardMaterial({color,roughness:.72});
-    const addBox=(w,h,d,color,x,y,z)=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(color));m.position.set(x,y,z);avatar.add(m);return m;};
-    addBox(.8,.8,.42,0xffc99d,0,2.45,0); // head
-    addBox(.82,.16,.44,0x6b422d,0,2.88,0); // hair
-    addBox(.12,.12,.05,0x233c50,-.19,2.48,.22);addBox(.12,.12,.05,0x233c50,.19,2.48,.22);
-    addBox(.85,.9,.48,0x147bd1,0,1.55,0); // torso
-    addBox(.28,.86,.3,0xffc99d,-.58,1.57,0);addBox(.28,.86,.3,0xffc99d,.58,1.57,0);
-    addBox(.34,.72,.36,0x31557a,-.23,.72,0);addBox(.34,.72,.36,0x31557a,.23,.72,0);
-    addBox(.36,.18,.5,0x263d55,-.23,.24,.06);addBox(.36,.18,.5,0x263d55,.23,.24,.06);
-    const ground=new THREE.Mesh(new THREE.CircleGeometry(1.35,48),new THREE.MeshBasicMaterial({color:0x4a9fbd,transparent:true,opacity:.23}));ground.rotation.x=-Math.PI/2;ground.position.y=.04;scene.add(ground);
-    let width=1,height=1;
-    function resize(){const r=stage.getBoundingClientRect();width=Math.max(1,r.width);height=Math.max(1,r.height);renderer.setSize(width,height,false);camera.aspect=width/height;camera.updateProjectionMatrix();}
-    resize();const ro=new ResizeObserver(resize);ro.observe(stage);
-    let down=false,lastX=0,rotation=0;
-    renderer.domElement.style.touchAction='pan-y';
-    renderer.domElement.addEventListener('pointerdown',e=>{down=true;lastX=e.clientX;renderer.domElement.setPointerCapture(e.pointerId);});
-    renderer.domElement.addEventListener('pointermove',e=>{if(down){rotation+=(e.clientX-lastX)*.012;lastX=e.clientX;avatar.rotation.y=rotation;}});
-    renderer.domElement.addEventListener('pointerup',()=>down=false);renderer.domElement.addEventListener('pointercancel',()=>down=false);
-    function animate(){renderer.render(scene,camera);requestAnimationFrame(animate);}animate();
-  }
-  stages.forEach(makeAvatar);
+  const $ = id => document.getElementById(id);
+  const modal=$('authModal'), form=$('authForm'), message=$('authMessage');
+  let mode='signup', client=null, currentUser=null;
+  const cfg=window.BLOCKOS_CONFIG||{};
+  if(cfg.SUPABASE_URL&&cfg.SUPABASE_ANON_KEY&&window.supabase){try{client=window.supabase.createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY)}catch(e){console.error(e)}}
+  const on=(id,event,fn)=>$(id)?.addEventListener(event,fn);
+  function setMessage(s,error=false){message.textContent=s;message.classList.toggle('error',error)}
+  function toast(s){const t=$('toast');t.textContent=s;t.classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.classList.add('hidden'),3500)}
+  function openAuth(m='signup'){setMode(m);modal.classList.remove('hidden');document.body.style.overflow='hidden';setTimeout(()=>$(m==='signup'?'username':'email').focus(),60)}
+  function closeAuth(){modal.classList.add('hidden');document.body.style.overflow='';setMessage('');form.reset()}
+  function setMode(m){mode=m;const signup=m==='signup';$('signupTab').classList.toggle('selected',signup);$('loginTab').classList.toggle('selected',!signup);$('authTitle').textContent=signup?'Create an account':'Welcome back';$('authSubtitle').textContent=signup?'Join Blockos Ville.':'Sign in to your account.';$('username').classList.toggle('hidden',!signup);$('username').required=signup;$('usernameLabel').classList.toggle('hidden',!signup);$('password').autocomplete=signup?'new-password':'current-password';$('authSubmit').textContent=signup?'Crear cuenta':'Iniciar sesión';setMessage('')}
+  function displayUser(user,username){currentUser=user||null;const name=username||user?.user_metadata?.username||user?.email?.split('@')[0]||'Guest';$('signedInAs').textContent=user?name:'';$('openAuth').textContent=user?'Cerrar sesión':'Iniciar sesión';$('headerSignup').classList.toggle('hidden',!!user);$('profileName').textContent=name;$('profileMessage').textContent=user?'Your profile is active.':'Sign in to view your profile.';$('profileAction').textContent=user?'Cerrar sesión':'Crear mi cuenta';if(user)closeAuth()}
+  async function refresh(){if(client){const {data}=await client.auth.getSession();if(data?.session){const u=data.session.user;const {data:p}=await client.from('profiles').select('username').eq('id',u.id).maybeSingle();displayUser(u,p?.username)}else displayUser(null)}else{const raw=localStorage.getItem('blockos_demo_user');if(raw){try{const u=JSON.parse(raw);displayUser({email:u.email,user_metadata:{username:u.username}},u.username)}catch{localStorage.removeItem('blockos_demo_user');displayUser(null)}}else displayUser(null)}}
+  form.addEventListener('submit',async e=>{e.preventDefault();const email=$('email').value.trim().toLowerCase(),password=$('password').value,username=$('username').value.trim();$('authSubmit').disabled=true;setMessage('');try{if(mode==='signup'&&!/^[a-zA-Z0-9_]{3,20}$/.test(username))throw Error('Username must be 3–20 letters, numbers or underscores.');if(client){if(mode==='signup'){const {data,error}=await client.auth.signUp({email,password,options:{data:{username}}});if(error)throw error;if(data.session){displayUser(data.user,username);toast('Account created.')}else setMessage('Account created. Check your email to confirm.')}else{const {data,error}=await client.auth.signInWithPassword({email,password});if(error)throw error;displayUser(data.user);toast('Signed in.')}}else{const users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');if(mode==='signup'){if(users[email])throw Error('An account with this email already exists in this browser.');users[email]={username,password};localStorage.setItem('blockos_demo_users',JSON.stringify(users));localStorage.setItem('blockos_demo_user',JSON.stringify({email,username}));displayUser({email,user_metadata:{username}},username);toast('Demo account created in this browser only.')}else{if(!users[email]||users[email].password!==password)throw Error('Incorrect email or password.');const u={email,username:users[email].username};localStorage.setItem('blockos_demo_user',JSON.stringify(u));displayUser({email,user_metadata:{username:u.username}},u.username);toast('Signed in (demo).')}}}catch(err){setMessage(err.message||'Could not complete request.',true)}finally{$('authSubmit').disabled=false;$('authSubmit').textContent=mode==='signup'?'Crear cuenta':'Iniciar sesión'}});
+  async function signOut(){if(client){const {error}=await client.auth.signOut();if(error){toast(error.message);return}}localStorage.removeItem('blockos_demo_user');displayUser(null);toast('Signed out.')}
+  on('openAuth','click',()=>currentUser?signOut():openAuth('login'));on('headerSignup','click',()=>openAuth('signup'));on('profileAction','click',()=>currentUser?signOut():openAuth('signup'));on('signupTab','click',()=>setMode('signup'));on('loginTab','click',()=>setMode('login'));on('closeAuth','click',closeAuth);modal.addEventListener('click',e=>{if(e.target===modal)closeAuth()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.classList.contains('hidden'))closeAuth()});
+  document.querySelectorAll('[data-game]').forEach(b=>b.addEventListener('click',()=>toast('“'+b.dataset.game+'” todavía no tiene un mundo jugable conectado.')));
+  document.querySelectorAll('.wear-button').forEach(b=>b.addEventListener('click',()=>toast('El editor de ropa todavía está en desarrollo.')));
+  on('peopleSearch','submit',e=>{e.preventDefault();const q=$('peopleQuery').value.trim();$('peopleResult').textContent=q?'Player search needs the persistent profile database connected.':'Enter a player name.'});
+  if(client)client.auth.onAuthStateChange((_event,session)=>{if(!session)displayUser(null)});refresh();
+  function makeAvatar(stage){if(!stage||!window.THREE)return;const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(35,1,.1,100);camera.position.set(4,3,6);camera.lookAt(0,1.35,0);const renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));stage.appendChild(renderer.domElement);scene.add(new THREE.HemisphereLight(0xffffff,0x777777,2));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(4,7,5);scene.add(light);const rig=new THREE.Group();scene.add(rig);const material=c=>new THREE.MeshLambertMaterial({color:c});const box=(w,h,d,c,x,y,z)=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material(c));m.position.set(x,y,z);rig.add(m);return m};
+    // Classic blocky R6 proportions: yellow head and arms, blue torso, green legs.
+    box(.78,.78,.72,0xffd83d,0,2.45,0);box(.09,.09,.035,0x222222,-.18,2.5,.37);box(.09,.09,.035,0x222222,.18,2.5,.37);box(.22,.035,.035,0x7b3024,0,2.29,.38);
+    box(.86,.92,.48,0x1479bd,0,1.55,0);box(.34,.92,.42,0xffd83d,-.62,1.55,0);box(.34,.92,.42,0xffd83d,.62,1.55,0);box(.38,.88,.43,0x39834b,-.23,.64,0);box(.38,.88,.43,0x39834b,.23,.64,0);
+    const floor=new THREE.Mesh(new THREE.PlaneGeometry(4,4),material(0xffffff));floor.rotation.x=-Math.PI/2;floor.position.y=.12;scene.add(floor);let rot=0,down=false,last=0;function resize(){const r=stage.getBoundingClientRect();renderer.setSize(Math.max(1,r.width),Math.max(1,r.height),false);camera.aspect=Math.max(1,r.width)/Math.max(1,r.height);camera.updateProjectionMatrix()}new ResizeObserver(resize).observe(stage);resize();renderer.domElement.style.touchAction='pan-y';renderer.domElement.addEventListener('pointerdown',e=>{down=true;last=e.clientX;renderer.domElement.setPointerCapture(e.pointerId)});renderer.domElement.addEventListener('pointermove',e=>{if(down){rot+=(e.clientX-last)*.012;last=e.clientX;rig.rotation.y=rot}});renderer.domElement.addEventListener('pointerup',()=>down=false);renderer.domElement.addEventListener('pointercancel',()=>down=false);function frame(){renderer.render(scene,camera);requestAnimationFrame(frame)}frame()}
+  makeAvatar($('heroAvatar'));makeAvatar($('profileAvatar'));
 })();
