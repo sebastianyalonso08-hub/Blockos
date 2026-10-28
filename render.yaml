@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: roblox-in-the-browser
-    runtime: go
-    plan: free
-    buildCommand: go build -o app .
-    startCommand: ./app
-    healthCheckPath: /healthz
