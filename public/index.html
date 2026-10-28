@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0756a6">
+<title>Blockos Ville — Juega, crea y comparte</title>
+<link rel="stylesheet" href="/styles.css">
+<script src="/config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Blockos Ville inicio"><span class="brand-mark">B</span><span>BLOCKOS<span class="brand-light"> VILLE</span></span></a>
+  <nav class="main-nav"><a class="active" href="#discover">Descubrir</a><a href="#games">Juegos</a><a href="#profile" id="profileNav">Perfil</a></nav>
+  <div class="top-actions"><span id="signedInAs" class="signed-in"></span><button class="btn btn-outline" id="openAuth">Iniciar sesión</button><button class="btn btn-blue" id="headerSignup">Registrarse</button></div>
+  <button class="mobile-menu" id="mobileMenu" aria-label="Abrir menú">☰</button>
+</header>
+<main>
+<section class="hero" id="discover">
+ <div class="hero-copy"><div class="eyebrow"><span class="live-dot"></span> TU PRÓXIMO MUNDO EMPIEZA AQUÍ</div>
+  <h1>Juega. Crea.<br><span>Vive aventuras.</span></h1>
+  <p>Explora experiencias hechas de bloques, conoce mundos nuevos y prepárate para construir los tuyos.</p>
+  <div class="hero-buttons"><button class="btn btn-yellow btn-large" id="heroSignup">¡Únete gratis!</button><a class="btn btn-glass btn-large" href="#games">Explorar juegos <span>→</span></a></div>
+  <div class="hero-stats"><div><strong>∞</strong><span>mundos por descubrir</span></div><div><strong>3D</strong><span>directo en tu navegador</span></div></div>
+ </div>
+ <div class="hero-art"><div class="sun"></div><div class="floating-block block-one"></div><div class="floating-block block-two"></div><div class="floating-block block-three"></div><div id="heroAvatar" class="avatar-stage"></div><div class="platform"></div><div class="art-label"><span class="label-icon">✦</span><span><b>Tu aventura comienza</b><small>Un universo por explorar</small></span></div></div>
+</section>
+<section class="quick-strip"><div><span class="strip-icon blue">▦</span><span><b>Mundos únicos</b><small>Experiencias para todos</small></span></div><div><span class="strip-icon orange">◈</span><span><b>Tu avatar, tu estilo</b><small>Hazlo a tu manera</small></span></div><div><span class="strip-icon green">♧</span><span><b>Juega en cualquier lugar</b><small>PC y móvil, desde la web</small></span></div></section>
+<section class="section" id="games"><div class="section-heading"><div><div class="eyebrow dark">ELIGE TU AVENTURA</div><h2>Experiencias destacadas</h2><p>Un primer vistazo a los mundos de Blockos Ville.</p></div><a href="#games" class="text-link">Ver todos <span>→</span></a></div>
+ <div class="game-grid">
+  <article class="game-card"><div class="game-thumb obby"><span class="game-tag">OBBY</span><div class="mini-person yellow-person"></div><div class="course"><i></i><i></i><i></i><i></i></div></div><div class="game-info"><div><h3>Salta y sobrevive</h3><p>Una carrera de obstáculos</p></div><span class="play-icon">▶</span></div><div class="game-meta"><span>◇ Aventura</span><span>Demo</span></div></article>
+  <article class="game-card"><div class="game-thumb city"><span class="game-tag">ROLEPLAY</span><div class="city-skyline"><i></i><i></i><i></i><i></i></div><div class="mini-person blue-person"></div></div><div class="game-info"><div><h3>Ciudad de bloques</h3><p>Tu historia, tus reglas</p></div><span class="play-icon">▶</span></div><div class="game-meta"><span>◇ Social</span><span>Demo</span></div></article>
+  <article class="game-card"><div class="game-thumb builder"><span class="game-tag">CREATIVO</span><div class="build-block b1"></div><div class="build-block b2"></div><div class="build-block b3"></div><div class="build-block b4"></div></div><div class="game-info"><div><h3>Construye tu isla</h3><p>Imagina algo increíble</p></div><span class="play-icon">▶</span></div><div class="game-meta"><span>◇ Construcción</span><span>Demo</span></div></article>
+  <article class="game-card"><div class="game-thumb space"><span class="game-tag">ARCADE</span><div class="planet"></div><div class="space-block"></div><div class="space-star">✦</div></div><div class="game-info"><div><h3>Órbita cúbica</h3><p>Una aventura espacial</p></div><span class="play-icon">▶</span></div><div class="game-meta"><span>◇ Acción</span><span>Demo</span></div></article>
+ </div>
+ <div class="demo-note">Estas tarjetas son ejemplos visuales; todavía no son juegos jugables.</div>
+</section>
+<section class="profile-section" id="profile"><div class="profile-panel"><div class="profile-copy"><div class="eyebrow dark">TU ESPACIO</div><h2>Tu personaje.<br>Tu historia.</h2><p>Crea tu cuenta para empezar tu perfil de Blockos Ville. Tu nombre y tus datos de perfil podrán acompañarte cuando vuelvas.</p><button class="btn btn-blue btn-large" id="profileAction">Crear mi cuenta</button><p class="small-note" id="profileMessage">Inicia sesión para ver tu perfil.</p></div><div class="profile-preview"><div class="preview-sky"></div><div class="preview-floor"></div><div id="profileAvatar" class="avatar-stage"></div><div class="profile-plaque"><span class="plaque-dot"></span><span><b id="profileName">Invitado</b><small>Miembro de Blockos Ville</small></span></div></div></div></section>
+</main>
+<footer><a class="brand footer-brand" href="/"><span class="brand-mark">B</span><span>BLOCKOS<span class="brand-light"> VILLE</span></span></a><p>Un universo de bloques, creado para jugar.</p><span>© 2026 Blockos Ville · Proyecto independiente</span></footer>
+<div class="modal-backdrop hidden" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authTitle"><div class="auth-modal"><button class="modal-close" id="closeAuth" aria-label="Cerrar">×</button><div class="auth-logo"><span class="brand-mark">B</span></div><div class="eyebrow dark">BIENVENIDO A BLOCKOS VILLE</div><h2 id="authTitle">Únete a la aventura</h2><p class="modal-subtitle" id="authSubtitle">Crea tu cuenta gratis para comenzar.</p>
+ <div class="auth-tabs"><button class="auth-tab selected" id="signupTab">Registrarse</button><button class="auth-tab" id="loginTab">Iniciar sesión</button></div>
+ <form id="authForm"><label for="username" id="usernameLabel">Nombre de usuario</label><input id="username" name="username" autocomplete="username" minlength="3" maxlength="20" placeholder="Ej. BlockosPlayer" required><label for="email">Correo electrónico</label><input id="email" name="email" type="email" autocomplete="email" placeholder="tu@correo.com" required><label for="password">Contraseña</label><input id="password" name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Mínimo 8 caracteres" required><button class="btn btn-blue btn-large auth-submit" id="authSubmit" type="submit">Crear cuenta</button><p class="auth-message" id="authMessage" role="status"></p></form><p class="legal">Al continuar, aceptas usar Blockos Ville de forma segura y respetuosa.</p></div></div>
+<div class="toast hidden" id="toast" role="status"></div>
+<script src="/app.js"></script>
+</body></html>
