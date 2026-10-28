@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canvas Multiplayer Demo</title>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="600" style="border:1px solid #000;"></canvas>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const context = canvas.getContext("2d");
+
+        const socketProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const socket = new WebSocket(`${socketProtocol}//${window.location.host}/echo`);
+
+        const player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            speed: 5
+        };
+
+        socket.onopen = function(event) {
+            console.log("WebSocket connection opened.");
+        };
+
+        socket.onmessage = function(event) {
+            console.log("Received message from server:", event.data);
+
+            // Parse the JSON data received from the server
+            const gameState = JSON.parse(event.data);
+
+            // Clear the canvas
+            context.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw players on the canvas based on the game state
+            for (const playerID in gameState.players) {
+                const otherPlayer = gameState.players[playerID];
+                drawPlayer(otherPlayer.x, otherPlayer.y);
+            }
+
+            // Draw the local player
+            drawPlayer(player.x, player.y);
+        };
+
+        socket.onclose = function(event) {
+            console.log("WebSocket connection closed.");
+        };
+
+        // Function to draw a player on the canvas
+        function drawPlayer(x, y) {
+            context.fillStyle = "#FF0000";
+            context.beginPath();
+            context.arc(x, y, 10, 0, 2 * Math.PI);
+            context.fill();
+        }
+
+        // Function to send player position to the server
+        function sendPlayerPosition() {
+            const jsonMessage = JSON.stringify({
+                method: "update_position",
+                x: player.x,
+                y: player.y
+            });
+
+            // Send the JSON string to the server
+            if (socket.readyState === WebSocket.OPEN) socket.send(jsonMessage);
+        }
+
+        // Event listeners for keyboard input
+        window.addEventListener("keydown", function(event) {
+            switch (event.key) {
+                case "W":
+                case "w":
+                    player.y -= player.speed;
+                    break;
+                case "A":
+                case "a":
+                    player.x -= player.speed;
+                    break;
+                case "S":
+                case "s":
+                    player.y += player.speed;
+                    break;
+                case "D":
+                case "d":
+                    player.x += player.speed;
+                    break;
+            }
+
+            // Send updated player position to the server
+            sendPlayerPosition();
+        });
+
+        // Main game loop (update and render)
+        function gameLoop() {
+            // Update player position and send it to the server
+            sendPlayerPosition();
+
+            // Draw the local player
+            drawPlayer(player.x, player.y);
+
+            // Schedule the next iteration of the game loop
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Start the game loop
+        gameLoop();
+    </script>
+</body>
+</html>
