@@ -24,3 +24,8 @@
 .item-icon:before,
 .item-icon.glasses:before,
 .item-icon.cap:before { content: none !important; display: none !important; }
+
+/* Classic item details page */
+.item-detail-layout{display:grid;grid-template-columns:minmax(220px,38%) minmax(0,1fr);gap:22px;align-items:start;border:1px solid #b8c8d8;background:#fff;padding:14px;margin:12px 0}.item-detail-image{min-height:260px;border:1px solid #333;background:#fff;display:flex;align-items:center;justify-content:center}.item-detail-image img{max-width:100%;max-height:260px;object-fit:contain}.item-detail-image .item-3d-preview{width:100%;height:260px}.item-detail-info h1{font-size:20px;margin:0 0 12px}.item-detail-info p{font-size:12px}.item-detail-price{font-weight:bold;color:#b56500;font-size:15px!important}.item-creator a{display:inline-flex;align-items:center;gap:7px}.creator-avatar{width:40px;height:40px;display:inline-grid;place-items:center;background:#e5edf5;border:1px solid #7891aa;color:#244d73;font-weight:bold;font-size:20px}.game-detail{display:grid;grid-template-columns:minmax(240px,40%) minmax(0,1fr);gap:18px;padding:12px;border:1px solid #b9c9d8;background:#fff}.game-detail .game-image{min-height:220px}.game-detail p{font-size:12px}.game-detail-stats{display:flex;gap:18px;flex-wrap:wrap;padding:8px;background:#eef3f8;border:1px solid #c5d3e0}.home-profile-link{display:inline-block;margin:4px 0 10px}@media(max-width:620px){.item-detail-layout,.game-detail{grid-template-columns:1fr}.item-detail-image{min-height:200px}}
+
+.creator-avatar-stage{display:inline-block;width:48px;height:58px;vertical-align:middle;background:#fff;border:1px solid #b7c8d8}.creator-avatar-stage canvas{display:block;width:100%;height:58px}

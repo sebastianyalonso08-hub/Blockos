@@ -174,3 +174,22 @@ on conflict (id) do update set name=excluded.name,category=excluded.category,des
 
 alter table public.avatar_equipped drop constraint if exists avatar_equipped_category_check;
 alter table public.avatar_equipped add constraint avatar_equipped_category_check check (category in ('face','head','hat','tshirt','shirt','pants'));
+
+
+-- Item sales counter used by the Catalog and item detail page.
+alter table public.catalog_items add column if not exists sold_count bigint not null default 0;
+create or replace function public.purchase_catalog_item(p_item_id text) returns text language plpgsql security definer set search_path=public as $$
+declare uid uuid := auth.uid(); item public.catalog_items%rowtype; balance integer;
+begin
+ if uid is null then raise exception 'Sign in first.'; end if;
+ select * into item from public.catalog_items where id=p_item_id for update;
+ if not found then raise exception 'Item not found.'; end if;
+ if exists(select 1 from public.inventory where user_id=uid and item_id=p_item_id) then return 'owned'; end if;
+ select coins into balance from public.profiles where id=uid for update;
+ if balance < item.price then raise exception 'Not enough Blockos coins.'; end if;
+ update public.profiles set coins=coins-item.price where id=uid;
+ insert into public.inventory(user_id,item_id) values(uid,p_item_id);
+ update public.catalog_items set sold_count=sold_count+1 where id=p_item_id;
+ return 'purchased';
+end; $$;
+grant execute on function public.purchase_catalog_item(text) to authenticated;
