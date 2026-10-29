@@ -34,9 +34,18 @@
       const {data,error}=await client.auth.getSession();
       if(error)console.error('Session restore failed:',error);
       if(data?.session){
+        // Restore the signed-in header immediately from the authoritative session.
+        // Profile lookup is supplemental and must never block or undo authentication UI.
         const u=data.session.user;
-        const {data:p}=await client.from('profiles').select('username').eq('id',u.id).maybeSingle();
-        displayUser(u,p?.username||u.user_metadata?.username||u.email?.split('@')[0]);
+        const fallbackName=u.user_metadata?.username||u.username||u.email?.split('@')[0]||'Player';
+        displayUser(u,fallbackName);
+        try {
+          const {data:p,error:profileError}=await client.from('profiles').select('username').eq('id',u.id).maybeSingle();
+          if(profileError)console.warn('Profile name lookup failed; keeping session username:',profileError.message);
+          if(p?.username && currentUser?.id===u.id)displayUser(u,p.username);
+        } catch(profileError) {
+          console.warn('Profile name lookup failed; session remains signed in:',profileError);
+        }
       }else displayUser(null);
     }else displayUser(null);
     loadCatalog().then(()=>renderItemDetail());
