@@ -193,3 +193,24 @@ begin
  return 'purchased';
 end; $$;
 grant execute on function public.purchase_catalog_item(text) to authenticated;
+
+
+-- Friend requests and accepted friendships. Run after the existing schema.
+create table if not exists public.friend_requests (
+ id uuid primary key default gen_random_uuid(),
+ sender_id uuid not null references public.profiles(id) on delete cascade,
+ receiver_id uuid not null references public.profiles(id) on delete cascade,
+ status text not null default 'pending' check (status in ('pending','accepted','rejected')),
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now(),
+ constraint friend_requests_not_self check (sender_id <> receiver_id),
+ constraint friend_requests_unique_pair unique (sender_id, receiver_id)
+);
+alter table public.friend_requests enable row level security;
+drop policy if exists "Users can view their own friend requests" on public.friend_requests;
+create policy "Users can view their own friend requests" on public.friend_requests for select to authenticated using (auth.uid() = sender_id or auth.uid() = receiver_id);
+drop policy if exists "Users can send friend requests" on public.friend_requests;
+create policy "Users can send friend requests" on public.friend_requests for insert to authenticated with check (auth.uid() = sender_id and sender_id <> receiver_id);
+drop policy if exists "Receivers can respond to friend requests" on public.friend_requests;
+create policy "Receivers can respond to friend requests" on public.friend_requests for update to authenticated using (auth.uid() = receiver_id and status = 'pending') with check (auth.uid() = receiver_id and status in ('accepted','rejected'));
+grant select, insert, update on public.friend_requests to authenticated;

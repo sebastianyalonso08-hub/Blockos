@@ -19,3 +19,9 @@ La navegación ya separa las secciones en páginas distintas. Los juegos de mues
 - Categorías comprables: Faces, Heads, Hats, T-Shirts, Shirts y Pants.
 - Para persistencia real de saldo, compras, equipamiento y colores, configura Supabase y ejecuta el archivo completo `supabase/schema.sql`.
 - En modo demo, saldo, inventario y colores solo se guardan en el navegador actual.
+
+
+## Accounts and friends (V11)
+- The signup form uses a username and password only. For Supabase Auth, this version maps usernames to an internal synthetic email address (`username@accounts.blockosville.invalid`); turn off Confirm email in Supabase Auth settings for this approach to work without an actual email inbox. Existing email-based accounts will need a migration or a separate username mapping before username-only login can authenticate them.
+- Run the updated `supabase/schema.sql` to add `friend_requests`. People lists registered profiles, lets signed-in players send requests, and Your Friends separates accepted friends, incoming requests (Accept/Reject), and sent requests.
+- Without Supabase, accounts and friend requests are demo-only in the current browser; they do not synchronize between browsers/devices.
