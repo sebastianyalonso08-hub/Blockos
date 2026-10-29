@@ -9,10 +9,27 @@
   function toast(s){const t=$('toast');t.textContent=s;t.classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.classList.add('hidden'),3500)}
   function authAlias(username){return username.trim().toLowerCase()+'@accounts.blockosville.invalid'}
   function openAuth(m='signup'){if(!modal)return;setMode(m);modal.classList.remove('hidden');document.body.style.overflow='hidden';setTimeout(()=>(m==='signup'?$('username'):$('username'))?.focus(),60)}
-  function closeAuth(){if(!modal)return;modal.classList.add('hidden');document.body.style.overflow='';setMessage('');form?.reset()}
+  function closeAuth(){if(!modal||!currentUser)return;modal.classList.add('hidden');document.body.style.overflow='';setMessage('');form?.reset()}
   function setMode(m){mode=m;const signup=m==='signup';$('signupTab')?.classList.toggle('selected',signup);$('loginTab')?.classList.toggle('selected',!signup);if($('authTitle'))$('authTitle').textContent=signup?'Create an account':'Welcome back';if($('authSubtitle'))$('authSubtitle').textContent=signup?'Join Blockos Ville.':'Sign in to your account.';$('username')?.classList.remove('hidden');if($('username'))$('username').required=true;$('usernameLabel')?.classList.remove('hidden');if($('password'))$('password').autocomplete=signup?'new-password':'current-password';if($('authSubmit'))$('authSubmit').textContent=signup?'Create Account':'Log In';setMessage('')}
-  function displayUser(user,username){currentUser=user||null;const scope=user?(user.id||user.user_metadata?.username||user.email||'account'):'guest';const safeScope=String(scope).toLowerCase().replace(/[^a-z0-9_-]/g,'_');demoKey='blockos_'+safeScope+'_inventory';equippedKey='blockos_'+safeScope+'_equipped';colorKey='blockos_'+safeScope+'_body_colors';coinsKey='blockos_'+safeScope+'_coins';const name=username||user?.user_metadata?.username||user?.email?.split('@')[0]||'Guest';if($('signedInAs'))$('signedInAs').textContent=user?name:'';if($('openAuth'))$('openAuth').textContent=user?'Sign Out':'Log In';$('headerSignup')?.classList.toggle('hidden',!!user);if($('profileName'))$('profileName').textContent=name;if($('profileMessage'))$('profileMessage').textContent=user?'Your profile is active.':'Sign in to view your profile.';if($('profileAction'))$('profileAction').textContent=user?'Sign Out':'Create Account';if($('guestBadge'))$('guestBadge').textContent=user?'':'Guest';if(user)closeAuth()}
+  function displayUser(user,username){
+    currentUser=user||null;
+    const scope=user?(user.id||user.user_metadata?.username||user.email||'account'):'';
+    const safeScope=String(scope).toLowerCase().replace(/[^a-z0-9_-]/g,'_');
+    equippedKey='blockos_'+safeScope+'_equipped';colorKey='blockos_'+safeScope+'_body_colors';coinsKey='blockos_'+safeScope+'_coins';
+    const name=username||user?.user_metadata?.username||user?.email?.split('@')[0]||'';
+    if($('signedInAs'))$('signedInAs').textContent=user?name:'';
+    if($('openAuth'))$('openAuth').textContent=user?'Sign Out':'Log In';
+    $('headerSignup')?.classList.toggle('hidden',!!user);
+    if($('profileName'))$('profileName').textContent=name;
+    if($('profileMessage'))$('profileMessage').textContent=user?'Your profile is active.':'Create an account or log in to continue.';
+    if($('profileAction'))$('profileAction').textContent=user?'Sign Out':'Create Account';
+    if(user)closeAuth();
+  }
   async function refresh(){
+    // No local/demo identities: all accounts and profile IDs come from Supabase Auth.
+    localStorage.removeItem('blockos_demo_user');
+    localStorage.removeItem('blockos_demo_users');
+    localStorage.removeItem('blockos_demo_friend_requests');localStorage.removeItem('blockos_demo_forum');localStorage.removeItem('blockos_demo_sold');
     if(client){
       const {data,error}=await client.auth.getSession();
       if(error)console.error('Session restore failed:',error);
@@ -21,69 +38,59 @@
         const {data:p}=await client.from('profiles').select('username').eq('id',u.id).maybeSingle();
         displayUser(u,p?.username||u.user_metadata?.username||u.email?.split('@')[0]);
       }else displayUser(null);
-    }else{
-      const raw=localStorage.getItem('blockos_demo_user');
-      if(raw){
-        try{
-          const active=JSON.parse(raw);
-          const users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');
-          const legacyIds={};
-          for(const [userKey,userRecord] of Object.entries(users)){
-            const oldId=userRecord.id||('demo-'+userKey);
-            if(!userRecord.id)userRecord.id='demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));
-            legacyIds[oldId]=userRecord.id;
-          }
-          localStorage.setItem('blockos_demo_users',JSON.stringify(users));
-          try{const requests=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]');let changed=false;for(const req of requests){if(legacyIds[req.from]){req.from=legacyIds[req.from];changed=true;}if(legacyIds[req.to]){req.to=legacyIds[req.to];changed=true;}}if(changed)localStorage.setItem('blockos_demo_friend_requests',JSON.stringify(requests));}catch{}
-          const key=String(active.username||'').toLowerCase();
-          const record=users[key];
-          if(record){
-            active.id=record.id;active.username=record.username;localStorage.setItem('blockos_demo_user',JSON.stringify(active));
-            displayUser({id:record.id,email:authAlias(record.username),user_metadata:{username:record.username}},record.username);
-          }else{localStorage.removeItem('blockos_demo_user');displayUser(null)}
-        }catch{localStorage.removeItem('blockos_demo_user');displayUser(null)}
-      }else displayUser(null);
-    }
+    }else displayUser(null);
     loadCatalog().then(()=>renderItemDetail());
     await loadAvatarInventory();
     await loadPublicProfile();
     await searchPeople($('peopleQuery')?.value.trim()||'');
     await loadFriendsPage();
+    if(!currentUser && (location.pathname==='/profile.html'||location.pathname==='/people.html'||location.pathname==='/friends.html'||location.pathname==='/avatar.html'))openAuth('signup');
   }
-  form?.addEventListener('submit',async e=>{e.preventDefault();const username=$('username').value.trim(),password=$('password').value;const email=authAlias(username);$('authSubmit').disabled=true;setMessage('');try{if(!/^[a-zA-Z0-9_]{3,20}$/.test(username))throw Error('Username must be 3–20 letters, numbers or underscores.');if(password.length<8)throw Error('Password must be at least 8 characters.');if(client){if(mode==='signup'){const {data,error}=await client.auth.signUp({email,password,options:{data:{username}}});if(error)throw error;if(data.session){displayUser(data.user,username);toast('Account created.')}else setMessage('Account created. If confirmation is enabled, disable email confirmation in Supabase Auth to use username-only accounts.')}else{const {data,error}=await client.auth.signInWithPassword({email,password});if(error)throw Error('Login failed. Check your username and password.');displayUser(data.user,username);toast('Signed in.')}}else{const users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');const key=username.toLowerCase();if(mode==='signup'){if(users[key])throw Error('That username is already registered in this browser.');users[key]={id:'demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2)),username,password,created_at:new Date().toISOString(),description:'',body_colors:null};localStorage.setItem('blockos_demo_users',JSON.stringify(users));localStorage.setItem('blockos_demo_user',JSON.stringify({id:users[key].id,username}));displayUser({id:users[key].id,email,user_metadata:{username}},username);toast('Demo account created in this browser only.')}else{if(!users[key]||users[key].password!==password)throw Error('Login failed. Check your username and password.');if(!users[key].id)users[key].id='demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));localStorage.setItem('blockos_demo_users',JSON.stringify(users));localStorage.setItem('blockos_demo_user',JSON.stringify({id:users[key].id,username:users[key].username}));displayUser({id:users[key].id,email,user_metadata:{username:users[key].username}},users[key].username);toast('Signed in (demo).')}}}catch(err){setMessage(err.message||'Could not complete request.',true)}finally{$('authSubmit').disabled=false;$('authSubmit').textContent=mode==='signup'?'Create Account':'Log In'}});
+  form?.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const username=$('username').value.trim(),password=$('password').value,email=authAlias(username);
+    $('authSubmit').disabled=true;setMessage('');
+    try{
+      if(!/^[a-zA-Z0-9_]{3,20}$/.test(username))throw Error('Username must be 3–20 letters, numbers or underscores.');
+      if(password.length<8)throw Error('Password must be at least 8 characters.');
+      if(!client)throw Error('Account services are unavailable. Configure Supabase in public/config.js, then reload.');
+      if(mode==='signup'){
+        const {data,error}=await client.auth.signUp({email,password,options:{data:{username}}});
+        if(error)throw error;
+        if(data.session){displayUser(data.user,username);await refresh();toast('Account created.');}
+        else setMessage('Account created. If email confirmation is enabled, confirm your account before logging in.');
+      }else{
+        const {data,error}=await client.auth.signInWithPassword({email,password});
+        if(error)throw Error('Login failed. Check your username and password.');
+        displayUser(data.user,username);await refresh();toast('Signed in.');
+      }
+    }catch(err){setMessage(err.message||'Could not complete request.',true)}
+    finally{$('authSubmit').disabled=false;$('authSubmit').textContent=mode==='signup'?'Create Account':'Log In'}
+  });
   async function signOut(){
-    if(client){
-      const {error}=await client.auth.signOut();
-      if(error){toast(error.message);return}
-    }
-    localStorage.removeItem('blockos_demo_user');
+    if(client){const {error}=await client.auth.signOut();if(error){toast(error.message);return}}
     currentUser=null;
-    resetGuestAvatar();
+    resetSignedOutState();
     displayUser(null);
     await loadAvatarInventory();
-    await loadCatalog();
-    renderItemDetail();
-    await loadPublicProfile();
-    await searchPeople($('peopleQuery')?.value.trim()||'');
-    await loadFriendsPage();
-    toast('Signed out. You are now Guest.');
+    await loadCatalog();renderItemDetail();
+    await loadPublicProfile();await searchPeople('');await loadFriendsPage();
+    openAuth('signup');
   }
   const DEFAULT_BODY_COLORS={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'};
-  function resetGuestAvatar(){
-    currentEquipped={};
-    bodyColors={...DEFAULT_BODY_COLORS};
+  function resetSignedOutState(){
+    currentEquipped={};bodyColors={...DEFAULT_BODY_COLORS};
     avatarRenderers.forEach(r=>r.update(bodyColors,{},catalogItems));
-    const label=$('avatarEquipped');if(label)label.textContent='No items equipped yet.';
-    const host=$('avatarInventory');if(host)host.innerHTML='<p>Sign in to see your wardrobe. <a href="/catalog.html">Shop the Catalog</a>.</p>';
-    updateCoinLabels(100);
+    const label=$('avatarEquipped');if(label)label.textContent='Sign in to view your wardrobe.';
+    const host=$('avatarInventory');if(host)host.innerHTML='<p>Create an account or log in to view your wardrobe.</p>';
+    updateCoinLabels(0);
   }
   on('openAuth','click',()=>currentUser?signOut():openAuth('login'));on('headerSignup','click',()=>openAuth('signup'));on('profileAction','click',()=>currentUser?signOut():openAuth('signup'));on('signupTab','click',()=>setMode('signup'));on('loginTab','click',()=>setMode('login'));on('closeAuth','click',closeAuth);modal?.addEventListener('click',e=>{if(e.target===modal)closeAuth()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&modal&&!modal.classList.contains('hidden'))closeAuth()});
   document.querySelectorAll('[data-game]').forEach(b=>b.addEventListener('click',()=>toast('“'+b.dataset.game+'” is not connected to a playable world yet.')));
-  // Forum threads and replies use Supabase when configured. Demo mode is explicitly local.
-  async function loadForum(){const host=$('forumPosts');if(!host)return;if(!client){let posts=[];try{posts=JSON.parse(localStorage.getItem('blockos_demo_forum')||'[]')}catch{}host.innerHTML=posts.length?posts.map(p=>'<article class="forum-post"><b>'+escapeHTML(p.title)+'</b><small> by <a href="/profile.html?user='+encodeURIComponent(p.author)+'">'+escapeHTML(p.author)+'</small><p>'+escapeHTML(p.body)+'</p></article>').join(''):'<p>No topics yet. Publish the first one in demo mode.</p>';return}const {data,error}=await client.from('forum_posts').select('id,title,body,category,created_at,user_id,profiles(id,username)').order('created_at',{ascending:false}).limit(50);if(error){host.textContent='Could not load topics. Run the latest schema.sql in Supabase.';return}host.innerHTML=data.length?data.map(p=>'<article class="forum-post"><b>'+escapeHTML(p.title)+'</b> <small>['+escapeHTML(p.category)+'] por '+'<a href="/profile.html?id='+encodeURIComponent(p.profiles?.id||p.user_id||'')+'">'+escapeHTML(p.profiles?.username||'Player')+'</a> · '+new Date(p.created_at).toLocaleString()+'</small><p>'+escapeHTML(p.body)+'</p></article>').join(''):'<p>No topics have been published yet.</p>'}
-  on('forumForm','submit',async e=>{e.preventDefault();if(!currentUser){toast('Please sign in to publish.');openAuth('login');return}const title=$('forumTitle').value.trim(),body=$('forumBody').value.trim(),category=$('forumCategory').value;if(!title||!body)return;const post={title,body,category,user_id:currentUser.id};if(client){const {error}=await client.from('forum_posts').insert(post);if(error){toast('Could not publish: '+error.message);return}}else{const arr=JSON.parse(localStorage.getItem('blockos_demo_forum')||'[]');arr.unshift({...post,author:currentUser.user_metadata?.username||currentUser.email,created_at:new Date().toISOString()});localStorage.setItem('blockos_demo_forum',JSON.stringify(arr))}e.target.reset();toast('Topic published.');loadForum()});loadForum();
-  // Help form records support requests in Supabase, or explains the demo limitation.
-  on('helpForm','submit',async e=>{e.preventDefault();if(!currentUser){toast('Please sign in to send a support request.');openAuth('login');return}const subject=$('helpSubject').value.trim(),details=$('helpDetails').value.trim(),out=$('helpMessage');if(!client){out.textContent='Demo mode: connect Supabase to submit a persistent request.';return}const {error}=await client.from('support_requests').insert({user_id:currentUser.id,subject,details});out.textContent=error?'Could not submit: '+error.message:'Request submitted. The team does not have a support dashboard yet. Save this confirmation number: BV-'+Date.now().toString().slice(-6);if(!error)e.target.reset()});
+  async function loadForum(){const host=$('forumPosts');if(!host)return;if(!client){host.innerHTML='<p>Forum is unavailable until account services are configured.</p>';return}const {data,error}=await client.from('forum_posts').select('id,title,body,category,created_at,user_id,profiles(id,username)').order('created_at',{ascending:false}).limit(50);if(error){host.textContent='Could not load topics. Run the latest schema.sql in Supabase.';return}host.innerHTML=data.length?data.map(p=>'<article class="forum-post"><b>'+escapeHTML(p.title)+'</b> <small>['+escapeHTML(p.category)+'] by '+'<a href="/profile.html?id='+encodeURIComponent(p.profiles?.id||p.user_id||'')+'">'+escapeHTML(p.profiles?.username||'Player')+'</a> · '+new Date(p.created_at).toLocaleString()+'</small><p>'+escapeHTML(p.body)+'</p></article>').join(''):'<p>No topics have been published yet.</p>'}
+  on('forumForm','submit',async e=>{e.preventDefault();if(!currentUser){toast('Please sign in to publish.');openAuth('login');return}const title=$('forumTitle').value.trim(),body=$('forumBody').value.trim(),category=$('forumCategory').value;if(!title||!body)return;const post={title,body,category,user_id:currentUser.id};if(!client){openAuth('signup');return}const {error}=await client.from('forum_posts').insert(post);if(error){toast('Could not publish: '+error.message);return}e.target.reset();toast('Topic published.');loadForum()});loadForum();
+  // Help form records support requests in Supabase.
+  on('helpForm','submit',async e=>{e.preventDefault();if(!currentUser){toast('Please sign in to send a support request.');openAuth('login');return}const subject=$('helpSubject').value.trim(),details=$('helpDetails').value.trim(),out=$('helpMessage');if(!client){out.textContent='Account services are unavailable. Configure Supabase first.';return}const {error}=await client.from('support_requests').insert({user_id:currentUser.id,subject,details});out.textContent=error?'Could not submit: '+error.message:'Request submitted. The team does not have a support dashboard yet. Save this confirmation number: BV-'+Date.now().toString().slice(-6);if(!error)e.target.reset()});
   // My Profile resolves the signed-in account first, then loads the requested immutable account ID.
   // Username URLs are supported only as a compatibility fallback.
   async function loadPublicProfile(){
@@ -94,7 +101,7 @@
     host.innerHTML='<p>Loading profile…</p>';
     let profile=null, ownerId=null;
     if(client){
-      if(!requestedId&&!requestedName&&!currentUser){host.innerHTML='<p>Sign in to view your profile, or visit People to find a player.</p>';return;}
+      if(!currentUser){host.innerHTML='<p>Create an account or log in to view profiles.</p>';openAuth('signup');return;}
       let query=client.from('profiles').select('id,username,created_at,description,body_colors');
       if(requestedId)query=query.eq('id',requestedId);
       else if(requestedName)query=query.ilike('username',requestedName);
@@ -103,23 +110,8 @@
       if(error){console.error('Profile lookup failed:',error);host.innerHTML='<p>Could not load this profile. Check the profiles table and its Row Level Security policies.</p>';return;}
       profile=data; ownerId=data?.id||null;
     }else{
-      let users={};let active=null;
-      try{users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}')}catch{}
-      try{active=JSON.parse(localStorage.getItem('blockos_demo_user')||'null')}catch{}
-      // Migrate old demo accounts once; every account receives a stable ID independent of username.
-      let changed=false;
-      for(const [key,u] of Object.entries(users)){
-        if(!u.id){u.id='demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));changed=true;}
-        if(!u.username)u.username=key;
-      }
-      if(changed)localStorage.setItem('blockos_demo_users',JSON.stringify(users));
-      const entries=Object.entries(users);
-      let found=null;
-      if(requestedId)found=entries.find(([,u])=>u.id===requestedId)?.[1]||null;
-      else if(requestedName)found=entries.find(([key,u])=>key.toLowerCase()===requestedName.toLowerCase()||String(u.username).toLowerCase()===requestedName.toLowerCase())?.[1]||null;
-      else if(currentUser?.id)found=entries.find(([,u])=>u.id===currentUser.id)?.[1]||null;
-      if(!found&&active?.id)found=entries.find(([,u])=>u.id===active.id)?.[1]||null;
-      if(found){profile={id:found.id,username:found.username,created_at:found.created_at||new Date().toISOString(),description:found.description||'',body_colors:found.body_colors||{}};ownerId=found.id;}
+      host.innerHTML='<p>Account services are unavailable. Configure Supabase and log in to view profiles.</p>';
+      return;
     }
     if(!profile){host.innerHTML='<h2>Player not found</h2><p>This account could not be found. Open the player from the People page so the profile link uses the correct account ID.</p>';return;}
     const own=!!currentUser&&String(ownerId)===String(currentUser.id);
@@ -135,7 +127,7 @@
         e.preventDefault();if(!currentUser||String(currentUser.id)!==String(ownerId))return;
         const value=$('profileDescriptionInput').value.trim(),status=$('descriptionStatus');
         if(client){const {error}=await client.from('profiles').update({description:value}).eq('id',currentUser.id);if(error){status.textContent='Could not save description: '+error.message;return;}}
-        else{let users={};try{users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}')}catch{}const entry=Object.values(users).find(u=>u.id===currentUser.id);if(!entry){status.textContent='Could not find this local account.';return;}entry.description=value;localStorage.setItem('blockos_demo_users',JSON.stringify(users));const active=JSON.parse(localStorage.getItem('blockos_demo_user')||'{}');active.id=currentUser.id;active.description=value;localStorage.setItem('blockos_demo_user',JSON.stringify(active));}
+        else{status.textContent='Account services are unavailable. Please configure Supabase.';return;}
         profile.description=value;$('profileDescriptionText').textContent=value||'This user has not written a description yet.';status.textContent='Description saved.';
       });
     }
@@ -163,10 +155,6 @@
         if(client){
           const {data,error}=await client.from('friend_requests').select('id,status,sender_id,receiver_id').or(`and(sender_id.eq.${self},receiver_id.eq.${p.id}),and(sender_id.eq.${p.id},receiver_id.eq.${self})`).limit(1).maybeSingle();
           if(!error&&data)state=data.status==='accepted'?'Friends':data.sender_id===self?'Request Sent':data.status==='pending'?'Respond in Your Friends':'none';
-        }else{
-          let requests=[];try{requests=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]')}catch{}
-          const req=requests.find(x=>(String(x.from)===String(self)&&String(x.to)===String(p.id))||(String(x.from)===String(p.id)&&String(x.to)===String(self)));
-          if(req)state=req.status==='accepted'?'Friends':String(req.from)===String(self)?'Request Sent':req.status==='pending'?'Respond in Your Friends':'none';
         }
         action=state==='none'?`<button class="classic-button" type="button" data-friend-request="${escapeHTML(p.id)}">Add Friend</button>`:`<span>${escapeHTML(state)}</span>`;
       }
@@ -177,27 +165,21 @@
   }
   async function searchPeople(q=''){
     const out=$('peopleResult');if(!out)return;
+    if(!currentUser){out.innerHTML='<p>Create an account or log in to find players.</p>';return;}
+    if(!client){out.innerHTML='<p>Account services are unavailable. Configure Supabase to find players.</p>';openAuth('signup');return;}
     out.textContent='Loading players…';
-    if(client){
-      let query=client.from('profiles').select('id,username,created_at').order('created_at',{ascending:false}).limit(100);
-      if(q)query=query.ilike('username','%'+q.replace(/[%,_]/g,'')+'%');
-      const {data,error}=await query;
-      if(error){out.textContent='Could not load players: '+error.message;console.error('People query failed:',error);return;}
-      await renderPeopleResults(data||[]);
-    }else{
-      let users={};try{users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}')}catch{}
-      let changed=false;
-      const demo=Object.entries(users).map(([key,u])=>{if(!u.id){u.id='demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));changed=true;}return{id:u.id,username:u.username||key,created_at:u.created_at||null};});
-      if(changed)localStorage.setItem('blockos_demo_users',JSON.stringify(users));
-      const filtered=q?demo.filter(p=>p.username.toLowerCase().includes(q.toLowerCase())):demo;
-      await renderPeopleResults(filtered);
-    }
+    let query=client.from('profiles').select('id,username,created_at').order('created_at',{ascending:false}).limit(100);
+    if(q)query=query.ilike('username','%'+q.replace(/[%,_]/g,'')+'%');
+    const {data,error}=await query;
+    if(error){out.textContent='Could not load players: '+error.message;console.error('People query failed:',error);return;}
+    await renderPeopleResults(data||[]);
   }
   on('peopleSearch','submit',async e=>{e.preventDefault();const q=$('peopleQuery').value.trim();$('peopleResult').textContent='Searching…';await searchPeople(q)});
-  document.addEventListener('click',async e=>{const b=e.target.closest('[data-friend-request]');if(!b)return;if(!currentUser){toast('Please log in to add friends.');openAuth('login');return}const receiver=b.dataset.friendRequest;if(receiver===currentUser.id)return;b.disabled=true;if(client){const {error}=await client.from('friend_requests').insert({sender_id:currentUser.id,receiver_id:receiver,status:'pending'});if(error)toast(error.code==='23505'?'A request already exists.':error.message);else toast('Friend request sent.')}else{const arr=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]');if(!arr.some(x=>x.from===currentUser.id&&x.to===receiver&&x.status==='pending'))arr.push({id:'req-'+Date.now(),from:currentUser.id,to:receiver,status:'pending',created_at:new Date().toISOString()});localStorage.setItem('blockos_demo_friend_requests',JSON.stringify(arr));toast('Friend request sent (demo).')}await searchPeople($('peopleQuery')?.value.trim()||'')});
-  async function loadFriendsPage(){const host=$('friendsContent');if(!host)return;if(!currentUser){host.innerHTML='<p>Please log in to view your friends and requests.</p>';return}if(client){const {data,error}=await client.from('friend_requests').select('id,status,sender_id,receiver_id,created_at,sender:profiles!friend_requests_sender_id_fkey(id,username),receiver:profiles!friend_requests_receiver_id_fkey(id,username)').or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`).order('created_at',{ascending:false});if(error){host.textContent='Could not load friends. Run the latest supabase/schema.sql and reload.';return}const rows=data||[];const accepted=rows.filter(r=>r.status==='accepted');const sent=rows.filter(r=>r.status==='pending'&&r.sender_id===currentUser.id);const received=rows.filter(r=>r.status==='pending'&&r.receiver_id===currentUser.id);const section=(title,items,kind)=>`<h2>${title}</h2>${items.length?'<ul>'+items.map(r=>{const other=r.sender_id===currentUser.id?r.receiver:r.sender;return `<li><a href="/profile.html?id=${encodeURIComponent(other?.id||'')}">${escapeHTML(other?.username||'Player')}</a>${kind==='received'?` <button class="classic-button blue-button" data-friend-accept="${r.id}">Accept</button> <button class="classic-button" data-friend-reject="${r.id}">Reject</button>`:kind==='sent'?' <small>Request sent</small>':''}</li>`}).join('')+'</ul>':'<p>None yet.</p>'}`;host.innerHTML=section('Your Friends',accepted,'friends')+section('Incoming Requests',received,'received')+section('Sent Requests',sent,'sent');}else{const all=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]');const rows=all.filter(r=>r.from===currentUser.id||r.to===currentUser.id);const users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');const nameFor=id=>Object.values(users).find(u=>String(u.id)===String(id))?.username||'Player';const section=(title,items,kind)=>`<h2>${title}</h2>${items.length?'<ul>'+items.map(r=>{const other=r.from===currentUser.id?r.to:r.from;return `<li>${escapeHTML(nameFor(other))}${kind==='received'?` <button class="classic-button blue-button" data-friend-accept="${r.id}">Accept</button> <button class="classic-button" data-friend-reject="${r.id}">Reject</button>`:kind==='sent'?' <small>Request sent</small>':''}</li>`}).join('')+'</ul>':'<p>None yet.</p>'}`;host.innerHTML=section('Your Friends',rows.filter(r=>r.status==='accepted'),'friends')+section('Incoming Requests',rows.filter(r=>r.status==='pending'&&r.to===currentUser.id),'received')+section('Sent Requests',rows.filter(r=>r.status==='pending'&&r.from===currentUser.id),'sent')}}
-  document.addEventListener('click',async e=>{const accept=e.target.closest('[data-friend-accept]'),reject=e.target.closest('[data-friend-reject]');if(!accept&&!reject)return;const id=(accept||reject).dataset.friendAccept||(reject||accept).dataset.friendReject;const status=accept?'accepted':'rejected';if(client){const {error}=await client.from('friend_requests').update({status}).eq('id',id).eq('receiver_id',currentUser.id);if(error){toast('Could not update request: '+error.message);return}}else{const arr=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]');const r=arr.find(x=>x.id===id&&x.to===currentUser.id);if(r)r.status=status;localStorage.setItem('blockos_demo_friend_requests',JSON.stringify(arr))}toast(accept?'Friend request accepted.':'Friend request rejected.');loadFriendsPage()});loadFriendsPage();
-  if(client)client.auth.onAuthStateChange((event,session)=>{if(event==='INITIAL_SESSION')return;if(session){(async()=>{const {data:p}=await client.from('profiles').select('username').eq('id',session.user.id).maybeSingle();displayUser(session.user,p?.username||session.user.user_metadata?.username||session.user.email?.split('@')[0]);await loadAvatarInventory();loadCatalog().then(()=>renderItemDetail());await loadPublicProfile();await searchPeople($('peopleQuery')?.value.trim()||'');await loadFriendsPage()})()}else if(event==='SIGNED_OUT'){displayUser(null);currentEquipped={};bodyColors={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'};avatarRenderers.forEach(r=>r.update(bodyColors,{},catalogItems));loadAvatarInventory();loadPublicProfile();searchPeople();loadFriendsPage()}});refresh();
+  document.addEventListener('click',async e=>{const b=e.target.closest('[data-friend-request]');if(!b)return;if(!currentUser){toast('Please log in to add friends.');openAuth('login');return}const receiver=b.dataset.friendRequest;if(receiver===currentUser.id)return;b.disabled=true;if(client){const {error}=await client.from('friend_requests').insert({sender_id:currentUser.id,receiver_id:receiver,status:'pending'});if(error)toast(error.code==='23505'?'A request already exists.':error.message);else toast('Friend request sent.')}else{toast('Account services are unavailable. Configure Supabase first.');return}await searchPeople($('peopleQuery')?.value.trim()||'')});
+  async function loadFriendsPage(){const host=$('friendsContent');if(!host)return;if(!currentUser){host.innerHTML='<p>Please log in to view your friends and requests.</p>';return}if(client){const {data,error}=await client.from('friend_requests').select('id,status,sender_id,receiver_id,created_at,sender:profiles!friend_requests_sender_id_fkey(id,username),receiver:profiles!friend_requests_receiver_id_fkey(id,username)').or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`).order('created_at',{ascending:false});if(error){host.textContent='Could not load friends. Run the latest supabase/schema.sql and reload.';return}const rows=data||[];const accepted=rows.filter(r=>r.status==='accepted');const sent=rows.filter(r=>r.status==='pending'&&r.sender_id===currentUser.id);const received=rows.filter(r=>r.status==='pending'&&r.receiver_id===currentUser.id);const section=(title,items,kind)=>`<h2>${title}</h2>${items.length?'<ul>'+items.map(r=>{const other=r.sender_id===currentUser.id?r.receiver:r.sender;return `<li><a href="/profile.html?id=${encodeURIComponent(other?.id||'')}">${escapeHTML(other?.username||'Player')}</a>${kind==='received'?` <button class="classic-button blue-button" data-friend-accept="${r.id}">Accept</button> <button class="classic-button" data-friend-reject="${r.id}">Reject</button>`:kind==='sent'?' <small>Request sent</small>':''}</li>`}).join('')+'</ul>':'<p>None yet.</p>'}`;host.innerHTML=section('Your Friends',accepted,'friends')+section('Incoming Requests',received,'received')+section('Sent Requests',sent,'sent');}else{host.innerHTML='<p>Account services are unavailable. Configure Supabase to use friends.</p>';}}
+  document.addEventListener('click',async e=>{const accept=e.target.closest('[data-friend-accept]'),reject=e.target.closest('[data-friend-reject]');if(!accept&&!reject)return;const id=(accept||reject).dataset.friendAccept||(reject||accept).dataset.friendReject;const status=accept?'accepted':'rejected';if(client){const {error}=await client.from('friend_requests').update({status}).eq('id',id).eq('receiver_id',currentUser.id);if(error){toast('Could not update request: '+error.message);return}}else{toast('Account services are unavailable. Configure Supabase first.');return}toast(accept?'Friend request accepted.':'Friend request rejected.');loadFriendsPage()});loadFriendsPage();
+  if(client)client.auth.onAuthStateChange((event,session)=>{if(event==='INITIAL_SESSION')return;if(session){(async()=>{const {data:p}=await client.from('profiles').select('username').eq('id',session.user.id).maybeSingle();displayUser(session.user,p?.username||session.user.user_metadata?.username||session.user.email?.split('@')[0]);await loadAvatarInventory();loadCatalog().then(()=>renderItemDetail());await loadPublicProfile();await searchPeople($('peopleQuery')?.value.trim()||'');await loadFriendsPage()})()}else if(event==='SIGNED_OUT'){displayUser(null);currentEquipped={};bodyColors={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'};avatarRenderers.forEach(r=>r.update(bodyColors,{},catalogItems));resetSignedOutState();loadAvatarInventory();loadPublicProfile();searchPeople();loadFriendsPage();openAuth('signup')}});
+  // Catalog items are loaded only from the configured database. No built-in demo inventory.
   const catalogSeed=[
     {id:'face-smile',name:'Classic Smile',category:'face',description:'Classic happy face.',price:0,image_url:'/assets/faces/classic-smile.svg',creator:'Blockos Ville'},
     {id:'face-serious',name:'Serious Face',category:'face',description:'A simple serious expression.',price:5,image_url:'/assets/faces/serious.svg',creator:'Blockos Ville'},
@@ -221,14 +203,10 @@
     {id:'hat-halo',name:'Golden Halo',category:'hat',description:'A floating golden ring.',price:35,creator:'Blockos Ville'}
   ];
   let catalogItems=[...catalogSeed], selectedCatalogCategory='all', currentEquipped={}, bodyColors={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'}, avatarRenderers=[], publicProfileRenderer=null;
-  let demoKey='blockos_guest_inventory', equippedKey='blockos_guest_equipped', colorKey='blockos_guest_body_colors', coinsKey='blockos_guest_coins';
-  function demoInventory(){try{return JSON.parse(localStorage.getItem(demoKey)||'[]')}catch{return []}}
-  function demoEquipped(){try{return JSON.parse(localStorage.getItem(equippedKey)||'{}')}catch{return {}}}
+  let equippedKey='', colorKey='', coinsKey='';
   function escapeHTML(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-  function coinBalance(){return Number(localStorage.getItem(coinsKey)||100)}
-  function demoSoldCount(id){try{return Number(JSON.parse(localStorage.getItem('blockos_demo_sold')||'{}')[id]||0)}catch{return 0}}
-  async function getOwned(){if(client&&currentUser){const {data}=await client.from('inventory').select('item_id').eq('user_id',currentUser.id);return (data||[]).map(x=>x.item_id)}return demoInventory()}
-  async function getCoins(){if(client&&currentUser){const {data}=await client.from('profiles').select('coins').eq('id',currentUser.id).maybeSingle();return Number(data?.coins??100)}return coinBalance()}
+  async function getOwned(){if(!client||!currentUser)return [];const {data}=await client.from('inventory').select('item_id').eq('user_id',currentUser.id);return (data||[]).map(x=>x.item_id)}
+  async function getCoins(){if(!client||!currentUser)return 0;const {data}=await client.from('profiles').select('coins').eq('id',currentUser.id).maybeSingle();return Number(data?.coins??0)}
   function updateCoinLabels(n){['catalogCoins','avatarCoins'].forEach(id=>{if($(id))$(id).textContent='Blockos Coins: '+n})}
   function iconMarkup(i){if(i.category==='face')return `<img class="item-2d-face" src="${escapeHTML(i.image_url||'/assets/faces/classic-smile.svg')}" alt="${escapeHTML(i.name)}">`;if(i.category==='shirt'||i.category==='tshirt'||i.category==='pants')return `<img class="clothing-art ${i.category}" src="/assets/clothing/${escapeHTML(i.id)}.svg" alt="${escapeHTML(i.name)}">`;return `<canvas class="item-3d-preview" data-preview="${escapeHTML(i.id)}" aria-label="3D preview of ${escapeHTML(i.name)}"></canvas>`}
   let catalogLoadToken=0;
@@ -257,25 +235,25 @@
   async function renderCatalog(host,token){
     const category=selectedCatalogCategory,q=($('catalogSearch')?.value||'').trim().toLowerCase();
     const items=catalogItems.filter(i=>(category==='all'||i.category===category)&&(!q||(String(i.name)+' '+String(i.description||'')+' '+String(i.category)).toLowerCase().includes(q)));
-    let owned=[],coins=coinBalance();
-    try{owned=await Promise.race([getOwned(),new Promise(resolve=>setTimeout(()=>resolve(demoInventory()),2500))])||[]}catch(e){console.warn('Could not load inventory for catalog.',e);owned=demoInventory()}
-    try{coins=await Promise.race([getCoins(),new Promise(resolve=>setTimeout(()=>resolve(coinBalance()),2500))])}catch(e){console.warn('Could not load coin balance.',e)}
+    let owned=[],coins=0;
+    try{owned=await Promise.race([getOwned(),new Promise(resolve=>setTimeout(()=>resolve([]),2500))])||[]}catch(e){console.warn('Could not load inventory for catalog.',e);owned=[]}
+    try{coins=await Promise.race([getCoins(),new Promise(resolve=>setTimeout(()=>resolve(0),2500))])}catch(e){console.warn('Could not load coin balance.',e);coins=0}
     if(token!==catalogLoadToken)return;
     updateCoinLabels(coins);
-    host.innerHTML=items.map(i=>`<article class="catalog-item" id="${escapeHTML(i.id)}"><div class="item-icon">${iconMarkup(i)}</div><a class="item-name" href="/item.html?id=${encodeURIComponent(i.id)}">${escapeHTML(i.name)}</a><p>Updated: Recently</p><p>Creator: <a href="/profile.html?user=${encodeURIComponent(i.creator||'Blockos Ville')}">${escapeHTML(i.creator||'Blockos Ville')}</a></p><p>Number Sold: ${Number(i.sold_count ?? demoSoldCount(i.id))}</p><p>Favorited: 0 times</p><p class="price">${Number(i.price)===0?'Free':`BC: ${Number(i.price)}`}</p>${owned.includes(i.id)?'<p class="owned">Owned</p>':'<button class="classic-button blue-button" data-buy="'+escapeHTML(i.id)+'">Buy</button>'}</article>`).join('')||'<p>No items found.</p>';
+    host.innerHTML=items.map(i=>`<article class="catalog-item" id="${escapeHTML(i.id)}"><div class="item-icon">${iconMarkup(i)}</div><a class="item-name" href="/item.html?id=${encodeURIComponent(i.id)}">${escapeHTML(i.name)}</a><p>Updated: Recently</p><p>Creator: <a href="/profile.html?user=${encodeURIComponent(i.creator||'Blockos Ville')}">${escapeHTML(i.creator||'Blockos Ville')}</a></p><p>Number Sold: ${Number(i.sold_count ?? 0)}</p><p>Favorited: 0 times</p><p class="price">${Number(i.price)===0?'Free':`BC: ${Number(i.price)}`}</p>${owned.includes(i.id)?'<p class="owned">Owned</p>':'<button class="classic-button blue-button" data-buy="'+escapeHTML(i.id)+'">Buy</button>'}</article>`).join('')||'<p>No items found.</p>';
     const notice=$('catalogNotice');if(notice)notice.textContent=`You have ${coins} Blockos Coins. Buy items here, then equip them in Avatar.`;
     host.querySelectorAll('[data-buy]').forEach(b=>b.addEventListener('click',()=>buyItem(b.dataset.buy)));
     host.querySelectorAll('.item-3d-preview').forEach(c=>makeItemPreview(c,c.dataset.preview));
   }
-  async function buyItem(id){const item=catalogItems.find(x=>x.id===id);if(!item)return;if(client){if(!currentUser){toast('Please sign in to buy items.');openAuth('login');return}const {data,error}=await client.rpc('purchase_catalog_item',{p_item_id:id});if(error){toast(error.message);return}toast(data==='owned'?'You already own this item.':'Item purchased!')}else{const inv=demoInventory();if(inv.includes(id)){toast('You already own this item.');return}let coins=coinBalance();if(coins<Number(item.price)){toast('You do not have enough Blockos Coins.');return}coins-=Number(item.price);inv.push(id);localStorage.setItem(demoKey,JSON.stringify(inv));localStorage.setItem(coinsKey,String(coins));const sold=JSON.parse(localStorage.getItem('blockos_demo_sold')||'{}');sold[id]=(sold[id]||0)+1;localStorage.setItem('blockos_demo_sold',JSON.stringify(sold));toast('Purchased in demo mode; saved in this browser only.')}await loadCatalog();await loadAvatarInventory()}
-  async function equipItem(id){const item=catalogItems.find(x=>x.id===id);if(!item)return;const owned=await getOwned();if(!owned.includes(id)){toast('You must buy this item first.');return}if(client&&currentUser){const {error}=await client.rpc('equip_catalog_item',{p_item_id:id});if(error){toast(error.message);return}}else{const eq=demoEquipped();eq[item.category]=id;localStorage.setItem(equippedKey,JSON.stringify(eq))}toast('Item equipped.');await loadAvatarInventory()}
-  async function unequipCategory(cat){if(client&&currentUser){const {error}=await client.from('avatar_equipped').delete().eq('user_id',currentUser.id).eq('category',cat);if(error){toast(error.message);return}}else{const eq=demoEquipped();delete eq[cat];localStorage.setItem(equippedKey,JSON.stringify(eq))}await loadAvatarInventory()}
+  async function buyItem(id){const item=catalogItems.find(x=>x.id===id);if(!item)return;if(!currentUser||!client){openAuth('signup');return}const {data,error}=await client.rpc('purchase_catalog_item',{p_item_id:id});if(error){toast(error.message);return}toast(data==='owned'?'You already own this item.':'Item purchased!');await loadCatalog();await loadAvatarInventory()}
+  async function equipItem(id){if(!currentUser||!client){openAuth('signup');return}const item=catalogItems.find(x=>x.id===id);if(!item)return;const owned=await getOwned();if(!owned.includes(id)){toast('You must buy this item first.');return}const {error}=await client.rpc('equip_catalog_item',{p_item_id:id});if(error){toast(error.message);return}toast('Item equipped.');await loadAvatarInventory()}
+  async function unequipCategory(cat){if(!currentUser||!client){openAuth('signup');return}const {error}=await client.from('avatar_equipped').delete().eq('user_id',currentUser.id).eq('category',cat);if(error){toast(error.message);return}await loadAvatarInventory()}
   async function loadAvatarInventory(){
     const host=$('avatarInventory');
     const requestedUserId=currentUser?.id||null;
     if(!requestedUserId){
-      resetGuestAvatar();
-      if(host)host.innerHTML='<p>Sign in to see your wardrobe. <a href="/catalog.html">Shop the Catalog</a>.</p>';
+      resetSignedOutState();
+      if(host)host.innerHTML='<p>Create an account or log in to view your wardrobe.</p>';
       return;
     }
     const owned=await getOwned();
@@ -288,16 +266,13 @@
       const {data:p}=await client.from('profiles').select('body_colors').eq('id',requestedUserId).maybeSingle();
       if((currentUser?.id||null)!==requestedUserId)return;
       bodyColors={...DEFAULT_BODY_COLORS,...(p?.body_colors||{})};
-    }else{
-      currentEquipped=demoEquipped();
-      try{bodyColors={...DEFAULT_BODY_COLORS,...JSON.parse(localStorage.getItem(colorKey)||'{}')}}catch{bodyColors={...DEFAULT_BODY_COLORS}}
-    }
+    }else{resetSignedOutState();if(host)host.innerHTML='<p>Account services are unavailable. Configure Supabase first.</p>';return;}
     const categories=['head','face','hat','tshirt','shirt','pants'];const label=$('avatarEquipped');if(label)label.innerHTML=categories.filter(c=>currentEquipped[c]).map(c=>{const i=catalogItems.find(x=>x.id===currentEquipped[c]);return i?`<div class="equipped-item"><b>${escapeHTML(c.toUpperCase())}</b> ${escapeHTML(i.name)} <button class="classic-button" data-remove="${c}">Remove</button></div>`:''}).join('')||'No items equipped yet.';
     if(host){host.innerHTML=owned.map(id=>{const i=catalogItems.find(x=>x.id===id);if(!i)return '';return `<article class="catalog-item inventory-item"><div class="item-icon">${iconMarkup(i)}</div><a class="item-name" href="/item.html?id=${encodeURIComponent(i.id)}">${escapeHTML(i.name)}</a><p>${escapeHTML(i.category.toUpperCase())}</p>${currentEquipped[i.category]===id?'<p class="owned">Equipped</p>':'<button class="classic-button blue-button" data-equip="'+escapeHTML(id)+'">Wear</button>'}</article>`}).join('')||'<p>Your wardrobe is empty. <a href="/catalog.html">Shop the Catalog</a>.</p>';host.querySelectorAll('[data-equip]').forEach(b=>b.addEventListener('click',()=>equipItem(b.dataset.equip)));host.querySelectorAll('.item-3d-preview').forEach(c=>makeItemPreview(c,c.dataset.preview));}label?.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>unequipCategory(b.dataset.remove)));updateCoinLabels(await getCoins());avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));}
   on('catalogSearchButton','click',loadCatalog);on('catalogSearch','keydown',e=>{if(e.key==='Enter')loadCatalog()});document.querySelectorAll('[data-category]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();const c=a.dataset.category;selectedCatalogCategory=c;document.querySelectorAll('[data-category]').forEach(x=>x.classList.toggle('selected',x===a));loadCatalog()}));document.querySelectorAll('[data-wardrobe]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();const cat=a.dataset.wardrobe;document.querySelectorAll('#avatarInventory .inventory-item').forEach(card=>{card.style.display=cat==='all'||card.querySelector('p')?.textContent===cat.toUpperCase()?'':'none'})}));
-  async function saveBodyColors(){const part=$('bodyPart')?.value,color=$('bodyColor')?.value;if(!part||!color)return;bodyColors[part]=color;if(client&&currentUser){const {error}=await client.from('profiles').update({body_colors:bodyColors}).eq('id',currentUser.id);if(error){toast('Could not save color: '+error.message);return}}else localStorage.setItem(colorKey,JSON.stringify(bodyColors));avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));toast('Color applied.');}
+  async function saveBodyColors(){const part=$('bodyPart')?.value,color=$('bodyColor')?.value;if(!part||!color)return;bodyColors[part]=color;if(client&&currentUser){const {error}=await client.from('profiles').update({body_colors:bodyColors}).eq('id',currentUser.id);if(error){toast('Could not save color: '+error.message);return}}else{openAuth('signup');return}avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));toast('Color applied.');}
   on('applyBodyColor','click',saveBodyColors);document.querySelectorAll('.classic-color-swatches [data-color]').forEach(b=>b.addEventListener('click',()=>{if($('bodyColor'))$('bodyColor').value=b.dataset.color;saveBodyColors()}));on('redrawAvatar','click',e=>{e.preventDefault();avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));});
-  function renderItemDetail(){const host=$('itemDetail');if(!host)return;const id=new URLSearchParams(location.search).get('id');const item=catalogItems.find(x=>x.id===id);if(!item){host.innerHTML='<p>Item not found. <a href="/catalog.html">Return to Catalog</a>.</p>';return}host.innerHTML=`<div class="item-detail-layout"><div class="item-detail-image">${iconMarkup(item)}</div><div class="item-detail-info"><h1>${escapeHTML(item.name)}</h1><p class="item-creator">Creator: <a href="/profile.html?user=${encodeURIComponent(item.creator||'Blockos Ville')}"><span id="creatorAvatar" class="creator-avatar-stage" aria-label="Creator avatar preview"></span> ${escapeHTML(item.creator||'Blockos Ville')}</a></p><p class="item-detail-price">Price: ${Number(item.price)===0?'Free':`BC: ${Number(item.price)}`}</p><p>${escapeHTML(item.description||'No description provided.')}</p><p>Number Sold: ${Number(item.sold_count??demoSoldCount(item.id))}</p><button class="classic-button blue-button" id="detailBuy">Buy Item</button><p><a href="/catalog.html">Back to Catalog</a></p></div></div>`;host.querySelectorAll('.item-3d-preview').forEach(c=>makeItemPreview(c,c.dataset.preview));const creatorName=item.creator||'Blockos Ville';const creatorRenderer=makeAvatar(host.querySelector('#creatorAvatar'),false);if(creatorRenderer&&client&&creatorName!=='Blockos Ville'){(async()=>{const {data:creator}=await client.from('profiles').select('id,body_colors').eq('username',creatorName).maybeSingle();if(creator){const {data:eq}=await client.from('avatar_equipped').select('category,item_id').eq('user_id',creator.id);creatorRenderer.update({...{head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'},...(creator.body_colors||{})},Object.fromEntries((eq||[]).map(x=>[x.category,x.item_id])),catalogItems)}})()}on('detailBuy','click',()=>buyItem(item.id))}
+  function renderItemDetail(){const host=$('itemDetail');if(!host)return;const id=new URLSearchParams(location.search).get('id');const item=catalogItems.find(x=>x.id===id);if(!item){host.innerHTML='<p>Item not found. <a href="/catalog.html">Return to Catalog</a>.</p>';return}host.innerHTML=`<div class="item-detail-layout"><div class="item-detail-image">${iconMarkup(item)}</div><div class="item-detail-info"><h1>${escapeHTML(item.name)}</h1><p class="item-creator">Creator: <a href="/profile.html?user=${encodeURIComponent(item.creator||'Blockos Ville')}"><span id="creatorAvatar" class="creator-avatar-stage" aria-label="Creator avatar preview"></span> ${escapeHTML(item.creator||'Blockos Ville')}</a></p><p class="item-detail-price">Price: ${Number(item.price)===0?'Free':`BC: ${Number(item.price)}`}</p><p>${escapeHTML(item.description||'No description provided.')}</p><p>Number Sold: ${Number(item.sold_count??0)}</p><button class="classic-button blue-button" id="detailBuy">Buy Item</button><p><a href="/catalog.html">Back to Catalog</a></p></div></div>`;host.querySelectorAll('.item-3d-preview').forEach(c=>makeItemPreview(c,c.dataset.preview));const creatorName=item.creator||'Blockos Ville';const creatorRenderer=makeAvatar(host.querySelector('#creatorAvatar'),false);if(creatorRenderer&&client&&creatorName!=='Blockos Ville'){(async()=>{const {data:creator}=await client.from('profiles').select('id,body_colors').eq('username',creatorName).maybeSingle();if(creator){const {data:eq}=await client.from('avatar_equipped').select('category,item_id').eq('user_id',creator.id);creatorRenderer.update({...{head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'},...(creator.body_colors||{})},Object.fromEntries((eq||[]).map(x=>[x.category,x.item_id])),catalogItems)}})()}on('detailBuy','click',()=>buyItem(item.id))}
     function makeItemPreview(canvas,id){
     if(!window.THREE||canvas.dataset.ready)return;
     const item=catalogItems.find(x=>x.id===id);if(!item)return;canvas.dataset.ready='1';
@@ -360,7 +335,7 @@
 
   // Early multiplayer foundation: Supabase Realtime Presence + Broadcast lobby.
   let lobbyChannel=null, lobbyJoined=false;
-  function lobbyName(){return currentUser?.user_metadata?.username||currentUser?.email?.split('@')[0]||'Guest';}
+  function lobbyName(){return currentUser?.user_metadata?.username||currentUser?.email?.split('@')[0]||'Player';}
   function renderLobbyPlayers(state){const host=$('lobbyPlayers');if(!host)return;const players=[];for(const key of Object.keys(state||{})){for(const p of state[key]||[])players.push(p)}host.innerHTML=players.length?players.map(p=>`<li><span class="presence-dot"></span>${escapeHTML(p.username||'Player')}${p.room?` <small>— ${escapeHTML(p.room)}</small>`:''}</li>`).join(''):'<li>No players online in this lobby yet.</li>';const count=$('lobbyPlayerCount');if(count)count.textContent=String(players.length);}
   function addLobbyMessage(msg){const host=$('lobbyChatMessages');if(!host)return;const row=document.createElement('p');row.className='lobby-chat-line';const who=document.createElement('b');who.textContent=(msg.username||'Player')+': ';const body=document.createElement('span');body.textContent=msg.text||'';row.append(who,body);host.appendChild(row);host.scrollTop=host.scrollHeight;}
   async function joinLobby(){const status=$('lobbyStatus');if(!status)return;if(!currentUser){status.textContent='Please log in to join multiplayer.';openAuth('login');return}if(!client){status.textContent='Multiplayer requires Supabase Realtime. Configure Supabase to connect players across devices.';return}if(lobbyJoined)return;const room=$('lobbyRoom')?.value||'Main Lobby';status.textContent='Connecting to '+room+'…';lobbyChannel=client.channel('blockos-lobby-'+room,{config:{presence:{key:currentUser.id||lobbyName()},broadcast:{self:false}}});lobbyChannel.on('presence',{event:'sync'},()=>renderLobbyPlayers(lobbyChannel.presenceState()));lobbyChannel.on('broadcast',{event:'chat'},({payload})=>addLobbyMessage(payload));lobbyChannel.subscribe(async state=>{if(state!=='SUBSCRIBED')return;await lobbyChannel.track({user_id:currentUser.id,username:lobbyName(),room,joined_at:new Date().toISOString()});lobbyJoined=true;status.textContent='Connected to '+room+'. You are in the lobby.';$('joinLobby')?.classList.add('hidden');$('leaveLobby')?.classList.remove('hidden');});}
@@ -369,7 +344,7 @@
   on('lobbyChatForm','submit',async e=>{e.preventDefault();const input=$('lobbyChatInput'),textValue=input?.value.trim();if(!textValue)return;if(!lobbyChannel||!lobbyJoined){toast('Join a lobby before chatting.');return}if(textValue.length>240){toast('Messages must be 240 characters or less.');return}await lobbyChannel.send({type:'broadcast',event:'chat',payload:{username:lobbyName(),text:textValue,at:new Date().toISOString()}});addLobbyMessage({username:lobbyName(),text:textValue});input.value='';});
   window.addEventListener('beforeunload',()=>{if(lobbyChannel&&client)client.removeChannel(lobbyChannel)});
 
-  makeAvatar($('heroAvatar'));publicProfileRenderer=makeAvatar($('profileAvatar'),false);makeAvatar($('avatarEditor'));loadCatalog().then(()=>renderItemDetail());loadAvatarInventory();
+  makeAvatar($('heroAvatar'));publicProfileRenderer=makeAvatar($('profileAvatar'),false);makeAvatar($('avatarEditor'));refresh();
 })();
 
 
