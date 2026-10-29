@@ -214,3 +214,7 @@ create policy "Users can send friend requests" on public.friend_requests for ins
 drop policy if exists "Receivers can respond to friend requests" on public.friend_requests;
 create policy "Receivers can respond to friend requests" on public.friend_requests for update to authenticated using (auth.uid() = receiver_id and status = 'pending') with check (auth.uid() = receiver_id and status in ('accepted','rejected'));
 grant select, insert, update on public.friend_requests to authenticated;
+
+
+-- Profile descriptions. Existing account UUIDs are the unique Account IDs shown on profiles.
+alter table public.profiles add column if not exists description text not null default '';
