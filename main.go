@@ -27,8 +27,9 @@ type User struct {
 	Coins        int               `json:"coins"`
 }
 type Store struct {
-	Users  map[string]*User            `json:"users"`
-	Tables map[string][]map[string]any `json:"tables"`
+	Users    map[string]*User            `json:"users"`
+	Tables   map[string][]map[string]any `json:"tables"`
+	Sessions map[string]string           `json:"sessions,omitempty"`
 }
 
 var mu sync.Mutex
@@ -74,7 +75,7 @@ func load() {
 		}
 	}
 	dbPath = filepath.Join(base, "blockos.json")
-	store = Store{Users: map[string]*User{}, Tables: map[string][]map[string]any{}}
+	store = Store{Users: map[string]*User{}, Tables: map[string][]map[string]any{}, Sessions: map[string]string{}}
 	b, e := os.ReadFile(dbPath)
 	if e == nil {
 		_ = json.Unmarshal(b, &store)
@@ -84,6 +85,9 @@ func load() {
 	}
 	if store.Tables == nil {
 		store.Tables = map[string][]map[string]any{}
+	}
+	if store.Sessions == nil {
+		store.Sessions = map[string]string{}
 	}
 }
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -102,7 +106,16 @@ func cookieUser(r *http.Request) *User {
 		return nil
 	}
 	u := store.Users[c.Value]
-	return u
+	if u != nil {
+		return u
+	}
+	// Fallback for browsers/proxies that do not retain the session cookie.
+	// The token is random, server-issued, and validated against the persisted session table.
+	token := r.Header.Get("X-Blockos-Session")
+	if token != "" && store.Sessions != nil {
+		return store.Users[store.Sessions[token]]
+	}
+	return nil
 }
 func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
 	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
@@ -156,8 +169,12 @@ func auth(w http.ResponseWriter, r *http.Request) {
 		store.Users[id] = u
 		store.Tables["profiles"] = append(store.Tables["profiles"], map[string]any{"id": id, "username": name, "created_at": u.CreatedAt, "description": "", "body_colors": u.BodyColors, "coins": 0})
 		_ = persist()
+		token := randomHex(32)
+		store.Sessions[token] = id
+		_ = persist()
 		setSessionCookie(w, r, id, 2592000)
-		writeJSON(w, 201, map[string]any{"user": publicUser(u)})
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, 201, map[string]any{"user": publicUser(u), "token": token})
 	case "/api/auth/login":
 		if r.Method != "POST" {
 			writeJSON(w, 405, map[string]string{"error": "Method not allowed"})
@@ -168,13 +185,21 @@ func auth(w http.ResponseWriter, r *http.Request) {
 		pass := fmt.Sprint(b["password"])
 		for _, u := range store.Users {
 			if strings.EqualFold(u.Username, name) && u.PasswordHash == hashPass(pass, u.Salt) {
+				token := randomHex(32)
+				store.Sessions[token] = u.ID
+				_ = persist()
 				setSessionCookie(w, r, u.ID, 2592000)
-				writeJSON(w, 200, map[string]any{"user": publicUser(u)})
+				w.Header().Set("Cache-Control", "no-store")
+				writeJSON(w, 200, map[string]any{"user": publicUser(u), "token": token})
 				return
 			}
 		}
 		writeJSON(w, 401, map[string]string{"error": "Login failed. Check your username and password."})
 	case "/api/auth/logout":
+		if token := r.Header.Get("X-Blockos-Session"); token != "" {
+			delete(store.Sessions, token)
+			_ = persist()
+		}
 		setSessionCookie(w, r, "", -1)
 		writeJSON(w, 200, map[string]any{"ok": true})
 	default:
