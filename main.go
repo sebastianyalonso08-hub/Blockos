@@ -104,6 +104,10 @@ func cookieUser(r *http.Request) *User {
 	u := store.Users[c.Value]
 	return u
 }
+func setSessionCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	http.SetCookie(w, &http.Cookie{Name: "bv_session", Value: value, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
+}
 func publicUser(u *User) map[string]any {
 	return map[string]any{"id": u.ID, "username": u.Username, "created_at": u.CreatedAt, "description": u.Description, "body_colors": u.BodyColors, "coins": u.Coins, "user_metadata": map[string]any{"username": u.Username}, "email": strings.ToLower(u.Username) + "@accounts.blockosville.invalid"}
 }
@@ -152,7 +156,7 @@ func auth(w http.ResponseWriter, r *http.Request) {
 		store.Users[id] = u
 		store.Tables["profiles"] = append(store.Tables["profiles"], map[string]any{"id": id, "username": name, "created_at": u.CreatedAt, "description": "", "body_colors": u.BodyColors, "coins": 0})
 		_ = persist()
-		http.SetCookie(w, &http.Cookie{Name: "bv_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 2592000})
+		setSessionCookie(w, r, id, 2592000)
 		writeJSON(w, 201, map[string]any{"user": publicUser(u)})
 	case "/api/auth/login":
 		if r.Method != "POST" {
@@ -164,14 +168,14 @@ func auth(w http.ResponseWriter, r *http.Request) {
 		pass := fmt.Sprint(b["password"])
 		for _, u := range store.Users {
 			if strings.EqualFold(u.Username, name) && u.PasswordHash == hashPass(pass, u.Salt) {
-				http.SetCookie(w, &http.Cookie{Name: "bv_session", Value: u.ID, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 2592000})
+				setSessionCookie(w, r, u.ID, 2592000)
 				writeJSON(w, 200, map[string]any{"user": publicUser(u)})
 				return
 			}
 		}
 		writeJSON(w, 401, map[string]string{"error": "Login failed. Check your username and password."})
 	case "/api/auth/logout":
-		http.SetCookie(w, &http.Cookie{Name: "bv_session", Value: "", Path: "/", HttpOnly: true, MaxAge: -1, SameSite: http.SameSiteLaxMode})
+		setSessionCookie(w, r, "", -1)
 		writeJSON(w, 200, map[string]any{"ok": true})
 	default:
 		writeJSON(w, 404, map[string]string{"error": "Not found"})
