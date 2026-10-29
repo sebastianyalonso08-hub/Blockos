@@ -2,17 +2,21 @@
   const $ = id => document.getElementById(id);
   const modal=$('authModal'), form=$('authForm'), message=$('authMessage');
   let mode='signup', client=null, currentUser=null;
+  // The account gate is shown synchronously, before any network request or 3D setup.
+  document.body.classList.add('auth-required');
+  if(modal){modal.classList.remove('hidden');document.body.style.overflow='hidden';}
   const cfg=window.BLOCKOS_CONFIG||{};
   if(window.supabase){try{client=window.supabase.createClient()}catch(e){console.error(e)}}
   const on=(id,event,fn)=>$(id)?.addEventListener(event,fn);
   function setMessage(s,error=false){if(message){message.textContent=s;message.classList.toggle('error',error)}}
   function toast(s){const t=$('toast');t.textContent=s;t.classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.classList.add('hidden'),3500)}
   function authAlias(username){return username.trim().toLowerCase()+'@accounts.blockosville.invalid'}
-  function openAuth(m='signup'){if(!modal)return;setMode(m);modal.classList.remove('hidden');document.body.style.overflow='hidden';setTimeout(()=>(m==='signup'?$('username'):$('username'))?.focus(),60)}
+  function openAuth(m='signup'){if(!modal)return;if(!currentUser)document.body.classList.add('auth-required');setMode(m);modal.classList.remove('hidden');document.body.style.overflow='hidden';setTimeout(()=>$('username')?.focus(),60)}
   function closeAuth(){if(!modal||!currentUser)return;modal.classList.add('hidden');document.body.style.overflow='';setMessage('');form?.reset()}
   function setMode(m){mode=m;const signup=m==='signup';$('signupTab')?.classList.toggle('selected',signup);$('loginTab')?.classList.toggle('selected',!signup);if($('authTitle'))$('authTitle').textContent=signup?'Create an account':'Welcome back';if($('authSubtitle'))$('authSubtitle').textContent=signup?'Join Blockos Ville.':'Sign in to your account.';$('username')?.classList.remove('hidden');if($('username'))$('username').required=true;$('usernameLabel')?.classList.remove('hidden');if($('password'))$('password').autocomplete=signup?'new-password':'current-password';if($('authSubmit'))$('authSubmit').textContent=signup?'Create Account':'Log In';setMessage('')}
   function displayUser(user,username){
     currentUser=user||null;
+    document.body.classList.toggle('auth-required',!currentUser);
     const scope=user?(user.id||user.user_metadata?.username||user.email||'account'):'';
     const safeScope=String(scope).toLowerCase().replace(/[^a-z0-9_-]/g,'_');
     equippedKey='blockos_'+safeScope+'_equipped';colorKey='blockos_'+safeScope+'_body_colors';coinsKey='blockos_'+safeScope+'_coins';
@@ -26,30 +30,35 @@
     if(user)closeAuth();
   }
   async function refresh(){
-    // Accounts and profile IDs come from the Blockos Ville Go backend.
-    if(client){
-      const {data,error}=await client.auth.getSession();
-      if(error)console.error('Session restore failed:',error);
-      if(data?.session){
-        // Restore the signed-in header immediately from the authoritative session.
-        // Profile lookup is supplemental and must never block or undo authentication UI.
-        const u=data.session.user;
-        const fallbackName=u.user_metadata?.username||u.username||u.email?.split('@')[0]||'Player';
-        displayUser(u,fallbackName);
-        try {
-          const {data:p,error:profileError}=await client.from('profiles').select('username').eq('id',u.id).maybeSingle();
-          if(profileError)console.warn('Profile name lookup failed; keeping session username:',profileError.message);
-          if(p?.username && currentUser?.id===u.id)displayUser(u,p.username);
-        } catch(profileError) {
-          console.warn('Profile name lookup failed; session remains signed in:',profileError);
-        }
-      }else { displayUser(null); openAuth('signup'); }
-    }else { displayUser(null); openAuth('signup'); }
-    loadCatalog().then(()=>renderItemDetail());
-    await loadAvatarInventory();
-    await loadPublicProfile();
-    await searchPeople($('peopleQuery')?.value.trim()||'');
-    await loadFriendsPage();
+    let sessionUser=null;
+    try {
+      if(client){
+        const {data,error}=await client.auth.getSession();
+        if(error)console.warn('Session restore failed:',error.message);
+        sessionUser=data?.session?.user||null;
+      }
+    } catch(error) { console.error('Session restore failed:',error); }
+    if(sessionUser){
+      const fallbackName=sessionUser.user_metadata?.username||sessionUser.username||sessionUser.email?.split('@')[0]||'Player';
+      displayUser(sessionUser,fallbackName);
+      try {
+        const {data:p,error}=await client.from('profiles').select('username').eq('id',sessionUser.id).maybeSingle();
+        if(error)console.warn('Profile name lookup failed:',error.message);
+        if(p?.username&&currentUser?.id===sessionUser.id)displayUser(sessionUser,p.username);
+      } catch(error){console.warn('Profile name lookup failed:',error)}
+    } else {
+      displayUser(null);
+      openAuth('signup');
+    }
+    // A failing page request must not leave another page permanently in "Loading".
+    const tasks=[
+      ['catalog',()=>loadCatalog().then(()=>renderItemDetail())],
+      ['avatar',()=>loadAvatarInventory()],
+      ['profile',()=>loadPublicProfile()],
+      ['people',()=>searchPeople($('peopleQuery')?.value.trim()||'')],
+      ['friends',()=>loadFriendsPage()]
+    ];
+    await Promise.all(tasks.map(async([name,fn])=>{try{await fn()}catch(error){console.error(name+' page load failed:',error);const targets={catalog:'catalogItems',avatar:'avatarInventory',profile:'publicProfile',people:'peopleResult',friends:'friendsContent'};const target=$(targets[name]);if(target)target.textContent='Could not load this section. Please try again.'}}));
     if(!currentUser)openAuth('signup');
   }
   form?.addEventListener('submit',async e=>{
@@ -198,7 +207,7 @@
   }
   on('peopleSearch','submit',async e=>{e.preventDefault();const q=$('peopleQuery').value.trim();$('peopleResult').textContent='Searching…';await searchPeople(q)});
   document.addEventListener('click',async e=>{const b=e.target.closest('[data-friend-request]');if(!b)return;if(!currentUser){toast('Please log in to add friends.');openAuth('login');return}const receiver=b.dataset.friendRequest;if(receiver===currentUser.id)return;b.disabled=true;if(client){const {error}=await client.from('friend_requests').insert({sender_id:currentUser.id,receiver_id:receiver,status:'pending'});if(error)toast(error.code==='23505'?'A request already exists.':error.message);else toast('Friend request sent.')}else{toast('Please try again after reloading the page.');return}await searchPeople($('peopleQuery')?.value.trim()||'')});
-  async function loadFriendsPage(){const host=$('friendsContent');if(!host)return;if(!currentUser){host.innerHTML='<p>Please log in to view your friends and requests.</p>';return}if(client){const {data,error}=await client.from('friend_requests').select('id,status,sender_id,receiver_id,created_at,sender:profiles!friend_requests_sender_id_fkey(id,username),receiver:profiles!friend_requests_receiver_id_fkey(id,username)').or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`).order('created_at',{ascending:false});if(error){host.textContent='Could not load friends. Please try again later.';return}const rows=data||[];const accepted=rows.filter(r=>r.status==='accepted');const sent=rows.filter(r=>r.status==='pending'&&r.sender_id===currentUser.id);const received=rows.filter(r=>r.status==='pending'&&r.receiver_id===currentUser.id);const section=(title,items,kind)=>`<h2>${title}</h2>${items.length?'<ul>'+items.map(r=>{const other=r.sender_id===currentUser.id?r.receiver:r.sender;return `<li><a href="/profile.html?id=${encodeURIComponent(other?.id||'')}">${escapeHTML(other?.username||'Player')}</a>${kind==='received'?` <button class="classic-button blue-button" data-friend-accept="${r.id}">Accept</button> <button class="classic-button" data-friend-reject="${r.id}">Reject</button>`:kind==='sent'?' <small>Request sent</small>':''}</li>`}).join('')+'</ul>':'<p>None yet.</p>'}`;host.innerHTML=section('Your Friends',accepted,'friends')+section('Incoming Requests',received,'received')+section('Sent Requests',sent,'sent');}else{host.innerHTML='<p>Please log in to use friends.</p>';}}
+  async function loadFriendsPage(){const host=$('friendsContent');if(!host)return;if(!currentUser){host.innerHTML='<p>Please log in to view your friends and requests.</p>';return}if(client){const {data,error}=await client.from('friend_requests').select('id,status,sender_id,receiver_id,created_at,sender:profiles!friend_requests_sender_id_fkey(id,username),receiver:profiles!friend_requests_receiver_id_fkey(id,username)').or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`).order('created_at',{ascending:false});if(error){host.textContent='Could not load friends: '+(error.message||'request failed')+'.';return}const rows=data||[];const accepted=rows.filter(r=>r.status==='accepted');const sent=rows.filter(r=>r.status==='pending'&&r.sender_id===currentUser.id);const received=rows.filter(r=>r.status==='pending'&&r.receiver_id===currentUser.id);const section=(title,items,kind)=>`<h2>${title}</h2>${items.length?'<ul>'+items.map(r=>{const other=r.sender_id===currentUser.id?r.receiver:r.sender;return `<li><a href="/profile.html?id=${encodeURIComponent(other?.id||'')}">${escapeHTML(other?.username||'Player')}</a>${kind==='received'?` <button class="classic-button blue-button" data-friend-accept="${r.id}">Accept</button> <button class="classic-button" data-friend-reject="${r.id}">Reject</button>`:kind==='sent'?' <small>Request sent</small>':''}</li>`}).join('')+'</ul>':'<p>None yet.</p>'}`;host.innerHTML=section('Your Friends',accepted,'friends')+section('Incoming Requests',received,'received')+section('Sent Requests',sent,'sent');}else{host.innerHTML='<p>Please log in to use friends.</p>';}}
   document.addEventListener('click',async e=>{const accept=e.target.closest('[data-friend-accept]'),reject=e.target.closest('[data-friend-reject]');if(!accept&&!reject)return;const id=(accept||reject).dataset.friendAccept||(reject||accept).dataset.friendReject;const status=accept?'accepted':'rejected';if(client){const {error}=await client.from('friend_requests').update({status}).eq('id',id).eq('receiver_id',currentUser.id);if(error){toast('Could not update request: '+error.message);return}}else{toast('Please try again after reloading the page.');return}toast(accept?'Friend request accepted.':'Friend request rejected.');loadFriendsPage()});loadFriendsPage();
   if(client)client.auth.onAuthStateChange((event,session)=>{if(event==='INITIAL_SESSION')return;if(session){(async()=>{const {data:p}=await client.from('profiles').select('username').eq('id',session.user.id).maybeSingle();displayUser(session.user,p?.username||session.user.user_metadata?.username||session.user.email?.split('@')[0]);await loadAvatarInventory();loadCatalog().then(()=>renderItemDetail());await loadPublicProfile();await searchPeople($('peopleQuery')?.value.trim()||'');await loadFriendsPage()})()}else if(event==='SIGNED_OUT'){displayUser(null);currentEquipped={};bodyColors={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'};avatarRenderers.forEach(r=>r.update(bodyColors,{},catalogItems));resetSignedOutState();loadAvatarInventory();loadPublicProfile();searchPeople();loadFriendsPage();openAuth('signup')}});
   // Catalog items are loaded only from the configured database. No built-in demo inventory.
@@ -312,7 +321,7 @@
     function makeItemPreview(canvas,id){
     if(!window.THREE||canvas.dataset.ready)return;
     const item=catalogItems.find(x=>x.id===id);if(!item)return;canvas.dataset.ready='1';
-    const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));
+    let renderer;try{renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true})}catch(error){console.warn('Catalog preview unavailable:',error);canvas.dataset.ready='error';return}renderer.setPixelRatio(Math.min(devicePixelRatio||1,1.5));
     const scene=new THREE.Scene();scene.background=new THREE.Color('#ffffff');const camera=new THREE.PerspectiveCamera(35,1,.1,50);camera.position.set(3,2.4,4);camera.lookAt(0,.35,0);
     scene.add(new THREE.HemisphereLight(0xffffff,0x888888,2));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(3,5,4);scene.add(light);
     const g=new THREE.Group();scene.add(g);const mat=(c)=>new THREE.MeshStandardMaterial({color:c,roughness:.8});const box=(w,h,d,c,x,y,z)=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(c));m.position.set(x,y,z);g.add(m);return m};
@@ -333,7 +342,7 @@
   }
   function makeAvatar(stage, registerForCurrentUser=true){
     if(!stage||!window.THREE)return;const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(32,1,.1,100);camera.position.set(4,3,7);camera.lookAt(0,1.35,0);
-    const renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));stage.appendChild(renderer.domElement);scene.add(new THREE.HemisphereLight(0xffffff,0x777777,2));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(4,7,5);scene.add(light);
+    let renderer;try{renderer=new THREE.WebGLRenderer({alpha:true,antialias:true})}catch(error){console.error('Avatar WebGL initialization failed:',error);stage.textContent='3D preview is unavailable in this browser.';return null}renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));stage.appendChild(renderer.domElement);scene.add(new THREE.HemisphereLight(0xffffff,0x777777,2));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(4,7,5);scene.add(light);
     const rig=new THREE.Group();scene.add(rig);const mat=(c,extra={})=>new THREE.MeshLambertMaterial({color:c,...extra});
     const addBox=(w,h,d,c,x,y,z,group=rig,extra={})=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(c,extra));m.position.set(x,y,z);group.add(m);return m};
     function update(colors,equipped,items){
@@ -380,7 +389,10 @@
   on('lobbyChatForm','submit',async e=>{e.preventDefault();const input=$('lobbyChatInput'),textValue=input?.value.trim();if(!textValue)return;if(!lobbyChannel||!lobbyJoined){toast('Join a lobby before chatting.');return}if(textValue.length>240){toast('Messages must be 240 characters or less.');return}await lobbyChannel.send({type:'broadcast',event:'chat',payload:{username:lobbyName(),text:textValue,at:new Date().toISOString()}});addLobbyMessage({username:lobbyName(),text:textValue});input.value='';});
   window.addEventListener('beforeunload',()=>{if(lobbyChannel&&client)client.removeChannel(lobbyChannel)});
 
-  makeAvatar($('heroAvatar'));publicProfileRenderer=makeAvatar($('profileAvatar'),false);makeAvatar($('avatarEditor'));refresh();
+  try{makeAvatar($('heroAvatar'))}catch(error){console.error(error)}
+  try{publicProfileRenderer=makeAvatar($('profileAvatar'),false)}catch(error){console.error(error)}
+  try{makeAvatar($('avatarEditor'))}catch(error){console.error(error)}
+  refresh().catch(error=>{console.error('Blockos Ville initialization failed:',error);displayUser(null);openAuth('signup')});
 })();
 
 

@@ -30,3 +30,14 @@ The JSON database survives normal requests, but Render's free web-service filesy
 ## Existing feature limits
 
 This update focuses on account identity, authentication/session handling, and connecting user records to the numeric account ID. It does not turn unfinished game play, cross-device real-time multiplayer, moderation/reporting, or the full publishing pipeline into completed features.
+
+## V26 functional fixes
+
+- The sign-up/log-in dialog is displayed immediately on first visit, before session or 3D initialization. The site navigation/content is kept hidden until a valid account session is restored or a new account is created; no guest session is created.
+- WebGL initialization failures are contained so they cannot stop authentication and the rest of the page scripts from starting.
+- The built-in catalog is initialized in the Go database (not only in browser memory), and purchases reject unknown item IDs. Purchased items are written to inventory and can be equipped into the avatar.
+- Profile description updates are persisted in the account profile record.
+- People search and friend-request storage/acceptance use the same numeric account IDs. Friend requests are visible to both participants and enriched with sender/receiver profile details.
+- The frontend loads catalog, avatar, profile, people, and friends independently so a failed section does not leave the other sections stuck in a loading state.
+
+The classic HTML structure and CSS styling are retained. Automated checks: `go test ./...`, `go test -race ./...`, and `node --check public/app.js`.

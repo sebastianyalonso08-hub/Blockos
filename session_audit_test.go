@@ -247,3 +247,129 @@ func TestConcurrentSignupsReceiveUniqueSequentialIDs(t *testing.T) {
 		}
 	}
 }
+
+func auditCreateUser(t *testing.T, username string) (string, string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(`{"username":"`+username+`","password":"password123"}`))
+	rw := httptest.NewRecorder()
+	auth(rw, req)
+	if rw.Code != http.StatusCreated {
+		t.Fatalf("signup %s: %d %s", username, rw.Code, rw.Body.String())
+	}
+	var got struct {
+		User  map[string]any `json:"user"`
+		Token string         `json:"token"`
+	}
+	if err := json.Unmarshal(rw.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	return got.User["id"].(string), got.Token
+}
+
+func TestProfileDescriptionPersistsAndFriendsRequestsWork(t *testing.T) {
+	t.Setenv("BLOCKOS_DATA_DIR", t.TempDir())
+	load()
+	firstID, firstToken := auditCreateUser(t, "ProfileOwner")
+	secondID, secondToken := auditCreateUser(t, "FriendTarget")
+
+	patch := httptest.NewRequest(http.MethodPatch, "/api/data/profiles?id=eq."+firstID, strings.NewReader(`{"description":"Hello Blockos Ville"}`))
+	patch.Header.Set("X-Blockos-Session", firstToken)
+	patchW := httptest.NewRecorder()
+	dataAPI(patchW, patch)
+	if patchW.Code != http.StatusOK {
+		t.Fatalf("profile update: %d %s", patchW.Code, patchW.Body.String())
+	}
+	get := httptest.NewRequest(http.MethodGet, "/api/data/profiles?id=eq."+firstID, nil)
+	get.Header.Set("X-Blockos-Session", firstToken)
+	getW := httptest.NewRecorder()
+	dataAPI(getW, get)
+	if !strings.Contains(getW.Body.String(), "Hello Blockos Ville") {
+		t.Fatalf("description not returned: %s", getW.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/data/friend_requests", strings.NewReader(`{"receiver_id":"`+secondID+`"}`))
+	request.Header.Set("X-Blockos-Session", firstToken)
+	requestW := httptest.NewRecorder()
+	dataAPI(requestW, request)
+	if requestW.Code != http.StatusCreated {
+		t.Fatalf("friend request create: %d %s", requestW.Code, requestW.Body.String())
+	}
+	incoming := httptest.NewRequest(http.MethodGet, "/api/data/friend_requests?or=sender_id.eq."+firstID+",receiver_id.eq."+firstID, nil)
+	incoming.Header.Set("X-Blockos-Session", secondToken)
+	incomingW := httptest.NewRecorder()
+	dataAPI(incomingW, incoming)
+	if incomingW.Code != http.StatusOK || !strings.Contains(incomingW.Body.String(), firstID) {
+		t.Fatalf("friend request not visible to receiver: %d %s", incomingW.Code, incomingW.Body.String())
+	}
+	var response struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(incomingW.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 {
+		t.Fatalf("receiver should see one incoming request, got %d", len(response.Data))
+	}
+	requestID := response.Data[0]["id"].(string)
+	accept := httptest.NewRequest(http.MethodPatch, "/api/data/friend_requests?id=eq."+requestID+"&receiver_id=eq."+secondID, strings.NewReader(`{"status":"accepted"}`))
+	accept.Header.Set("X-Blockos-Session", secondToken)
+	acceptW := httptest.NewRecorder()
+	dataAPI(acceptW, accept)
+	if acceptW.Code != http.StatusOK || !strings.Contains(acceptW.Body.String(), "accepted") {
+		t.Fatalf("friend request accept: %d %s", acceptW.Code, acceptW.Body.String())
+	}
+}
+
+func TestCatalogItemsExistAndUnknownItemsCannotBePurchased(t *testing.T) {
+	t.Setenv("BLOCKOS_DATA_DIR", t.TempDir())
+	load()
+	_, token := auditCreateUser(t, "CatalogTester")
+	list := httptest.NewRequest(http.MethodGet, "/api/data/catalog_items?select=*", nil)
+	list.Header.Set("X-Blockos-Session", token)
+	listW := httptest.NewRecorder()
+	dataAPI(listW, list)
+	if listW.Code != http.StatusOK || !strings.Contains(listW.Body.String(), "face-smile") {
+		t.Fatalf("catalog missing built-in items: %d %s", listW.Code, listW.Body.String())
+	}
+	bad := httptest.NewRequest(http.MethodPost, "/api/rpc/purchase_catalog_item", strings.NewReader(`{"p_item_id":"not-a-real-item"}`))
+	bad.Header.Set("X-Blockos-Session", token)
+	badW := httptest.NewRecorder()
+	rpcAPI(badW, bad)
+	if badW.Code != http.StatusNotFound {
+		t.Fatalf("unknown item purchase should fail, got %d %s", badW.Code, badW.Body.String())
+	}
+}
+
+func TestFreeCatalogItemCanBeBoughtAndEquippedForAvatar(t *testing.T) {
+	t.Setenv("BLOCKOS_DATA_DIR", t.TempDir())
+	load()
+	userID, token := auditCreateUser(t, "AvatarTester")
+	buy := httptest.NewRequest(http.MethodPost, "/api/rpc/purchase_catalog_item", strings.NewReader(`{"p_item_id":"face-smile"}`))
+	buy.Header.Set("X-Blockos-Session", token)
+	buyW := httptest.NewRecorder()
+	rpcAPI(buyW, buy)
+	if buyW.Code != http.StatusOK {
+		t.Fatalf("buy free face: %d %s", buyW.Code, buyW.Body.String())
+	}
+	equip := httptest.NewRequest(http.MethodPost, "/api/rpc/equip_catalog_item", strings.NewReader(`{"p_item_id":"face-smile"}`))
+	equip.Header.Set("X-Blockos-Session", token)
+	equipW := httptest.NewRecorder()
+	rpcAPI(equipW, equip)
+	if equipW.Code != http.StatusOK {
+		t.Fatalf("equip face: %d %s", equipW.Code, equipW.Body.String())
+	}
+	wardrobe := httptest.NewRequest(http.MethodGet, "/api/data/inventory?user_id=eq."+userID, nil)
+	wardrobe.Header.Set("X-Blockos-Session", token)
+	wardrobeW := httptest.NewRecorder()
+	dataAPI(wardrobeW, wardrobe)
+	if !strings.Contains(wardrobeW.Body.String(), "face-smile") {
+		t.Fatalf("wardrobe missing purchased face: %s", wardrobeW.Body.String())
+	}
+	outfit := httptest.NewRequest(http.MethodGet, "/api/data/avatar_equipped?user_id=eq."+userID, nil)
+	outfit.Header.Set("X-Blockos-Session", token)
+	outfitW := httptest.NewRecorder()
+	dataAPI(outfitW, outfit)
+	if !strings.Contains(outfitW.Body.String(), `"category":"face"`) {
+		t.Fatalf("avatar outfit missing equipped face: %s", outfitW.Body.String())
+	}
+}

@@ -37,3 +37,7 @@
 .people-results li, #friendsContent li { padding: 7px 5px; border-bottom: 1px solid #ddd; }
 #friendsContent h2 { margin-top: 20px; border-bottom: 1px solid #aaa; padding-bottom: 4px; }
 #friendsContent button { margin-left: 6px; }
+
+/* First-visit account gate: keep the classic site hidden until a real account session exists. */
+body.auth-required .site{visibility:hidden}
+body.auth-required{overflow:hidden}

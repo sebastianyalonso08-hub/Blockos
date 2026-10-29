@@ -67,6 +67,35 @@ func persist() error {
 	}
 	return os.Rename(tmp, dbPath)
 }
+func seedCatalog() {
+	if len(store.Tables["catalog_items"]) > 0 {
+		return
+	}
+	items := []map[string]any{
+		{"id": "face-smile", "name": "Classic Smile", "category": "face", "description": "Classic happy face.", "price": 0, "image_url": "/assets/faces/classic-smile.svg", "creator": "Blockos Ville"},
+		{"id": "face-serious", "name": "Serious Face", "category": "face", "description": "A simple serious expression.", "price": 5, "image_url": "/assets/faces/serious.svg", "creator": "Blockos Ville"},
+		{"id": "face-silly", "name": "Silly Face", "category": "face", "description": "A playful classic face.", "price": 8, "image_url": "/assets/faces/silly.svg", "creator": "Blockos Ville"},
+		{"id": "head-classic", "name": "Classic Head", "category": "head", "description": "Classic R6 cylindrical head.", "price": 0, "creator": "Blockos Ville"},
+		{"id": "hat-green", "name": "Classic Green Cap", "category": "hat", "description": "A green baseball cap.", "price": 10, "creator": "Blockos Ville"},
+		{"id": "hat-top", "name": "Black Top Hat", "category": "hat", "description": "A classic black top hat.", "price": 25, "creator": "Blockos Ville"},
+		{"id": "hat-crown", "name": "Golden Crown", "category": "hat", "description": "A golden crown accessory.", "price": 50, "creator": "Blockos Ville"},
+		{"id": "hat-party", "name": "Party Cone", "category": "hat", "description": "A colorful party hat.", "price": 15, "creator": "Blockos Ville"},
+		{"id": "shirt-blue", "name": "Blue Classic Shirt", "category": "shirt", "description": "A blue long-sleeved classic shirt.", "price": 15, "color": "#1479bd", "creator": "Blockos Ville"},
+		{"id": "shirt-red", "name": "Red Classic Shirt", "category": "shirt", "description": "A red long-sleeved classic shirt.", "price": 15, "color": "#bd2828", "creator": "Blockos Ville"},
+		{"id": "shirt-black", "name": "Black Classic Shirt", "category": "shirt", "description": "A black classic shirt.", "price": 20, "color": "#222222", "creator": "Blockos Ville"},
+		{"id": "tshirt-logo", "name": "Blockos Logo T-Shirt", "category": "tshirt", "description": "A short-sleeved logo tee.", "price": 10, "color": "#e8e8e8", "creator": "Blockos Ville"},
+		{"id": "tshirt-green", "name": "Green T-Shirt", "category": "tshirt", "description": "A green short-sleeved tee.", "price": 10, "color": "#39834b", "creator": "Blockos Ville"},
+		{"id": "tshirt-yellow", "name": "Yellow T-Shirt", "category": "tshirt", "description": "A yellow short-sleeved tee.", "price": 10, "color": "#ffcc33", "creator": "Blockos Ville"},
+		{"id": "pants-green", "name": "Green Pants", "category": "pants", "description": "Classic green trousers.", "price": 12, "color": "#39834b", "creator": "Blockos Ville"},
+		{"id": "pants-blue", "name": "Blue Pants", "category": "pants", "description": "Classic blue trousers.", "price": 12, "color": "#3157a4", "creator": "Blockos Ville"},
+		{"id": "pants-black", "name": "Black Pants", "category": "pants", "description": "Classic black trousers.", "price": 15, "color": "#252525", "creator": "Blockos Ville"},
+		{"id": "hat-glasses", "name": "Classic Glasses", "category": "hat", "description": "Black frame glasses.", "price": 18, "creator": "Blockos Ville"},
+		{"id": "hat-winter", "name": "Winter Beanie", "category": "hat", "description": "A rounded winter hat.", "price": 20, "creator": "Blockos Ville"},
+		{"id": "hat-halo", "name": "Golden Halo", "category": "hat", "description": "A floating golden ring.", "price": 35, "creator": "Blockos Ville"},
+	}
+	store.Tables["catalog_items"] = items
+}
+
 func load() {
 	base := os.Getenv("BLOCKOS_DATA_DIR")
 	if base == "" {
@@ -106,6 +135,10 @@ func load() {
 	}
 	if store.NextUserID < 1 {
 		store.NextUserID = 1
+	}
+	if len(store.Tables["catalog_items"]) == 0 {
+		seedCatalog()
+		_ = persist()
 	}
 }
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -525,14 +558,24 @@ func rpcAPI(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		var price int
+		found := false
 		for _, row := range store.Tables["catalog_items"] {
 			if fmt.Sprint(row["id"]) == item {
-				price, _ = row["price"].(int)
-				if f, ok := row["price"].(float64); ok {
-					price = int(f)
+				found = true
+				switch v := row["price"].(type) {
+				case int:
+					price = v
+				case int64:
+					price = int(v)
+				case float64:
+					price = int(v)
 				}
 				break
 			}
+		}
+		if !found {
+			writeJSON(w, 404, map[string]string{"error": "Catalog item not found."})
+			return
 		}
 		if u.Coins < price {
 			writeJSON(w, 400, map[string]string{"error": "You do not have enough Blockos Coins."})
