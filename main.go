@@ -101,19 +101,20 @@ func body(r *http.Request) map[string]any {
 	return v
 }
 func cookieUser(r *http.Request) *User {
-	c, e := r.Cookie("bv_session")
-	if e != nil {
-		return nil
+	// Prefer the persistent HttpOnly cookie when it exists.
+	if c, err := r.Cookie("bv_session"); err == nil && c.Value != "" {
+		if u := store.Users[c.Value]; u != nil {
+			return u
+		}
 	}
-	u := store.Users[c.Value]
-	if u != nil {
-		return u
-	}
-	// Fallback for browsers/proxies that do not retain the session cookie.
-	// The token is random, server-issued, and validated against the persisted session table.
+	// Always check the server-issued token too, including when the cookie is
+	// missing. Returning early on a missing cookie used to bypass this fallback
+	// and made a refresh/navigation look like a logout in some deployments.
 	token := r.Header.Get("X-Blockos-Session")
 	if token != "" && store.Sessions != nil {
-		return store.Users[store.Sessions[token]]
+		if id, ok := store.Sessions[token]; ok {
+			return store.Users[id]
+		}
 	}
 	return nil
 }
