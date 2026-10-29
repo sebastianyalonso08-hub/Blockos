@@ -1,6 +1,2 @@
-// Añade aquí la URL del proyecto y la clave pública (anon/publishable) de Supabase.
-// No uses nunca la service_role key en el navegador.
-window.BLOCKOS_CONFIG = {
-  SUPABASE_URL: "",
-  SUPABASE_ANON_KEY: ""
-};
+// Blockos Ville uses its own Go backend. No external account configuration is required.
+window.BLOCKOS_CONFIG = {};
