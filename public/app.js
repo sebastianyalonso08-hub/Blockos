@@ -27,9 +27,6 @@
   }
   async function refresh(){
     // Accounts and profile IDs come from the Blockos Ville Go backend.
-    localStorage.removeItem('blockos_demo_user');
-    localStorage.removeItem('blockos_demo_users');
-    localStorage.removeItem('blockos_demo_friend_requests');localStorage.removeItem('blockos_demo_forum');localStorage.removeItem('blockos_demo_sold');
     if(client){
       const {data,error}=await client.auth.getSession();
       if(error)console.error('Session restore failed:',error);
@@ -46,14 +43,14 @@
         } catch(profileError) {
           console.warn('Profile name lookup failed; session remains signed in:',profileError);
         }
-      }else displayUser(null);
-    }else displayUser(null);
+      }else { displayUser(null); openAuth('signup'); }
+    }else { displayUser(null); openAuth('signup'); }
     loadCatalog().then(()=>renderItemDetail());
     await loadAvatarInventory();
     await loadPublicProfile();
     await searchPeople($('peopleQuery')?.value.trim()||'');
     await loadFriendsPage();
-    if(!currentUser && (location.pathname==='/profile.html'||location.pathname==='/people.html'||location.pathname==='/friends.html'||location.pathname==='/avatar.html'))openAuth('signup');
+    if(!currentUser)openAuth('signup');
   }
   form?.addEventListener('submit',async e=>{
     e.preventDefault();
@@ -126,7 +123,7 @@
     const own=!!currentUser&&String(ownerId)===String(currentUser.id);
     const name=profile.username||'Player';
     if($('profileName'))$('profileName').textContent=name;
-    if($('profileMessage'))$('profileMessage').textContent='Account ID: '+profile.id;
+    if($('profileMessage'))$('profileMessage').textContent='Account ID: '+String(profile.id).padStart(4,'0');
     const action=$('profileAction');if(action){action.classList.toggle('hidden',!own);action.textContent=own?'Sign Out':'Create Account';}
     const details=document.querySelector('.profile-details');
     if(details){
@@ -157,14 +154,28 @@
     const out=$('peopleResult');if(!out)return;
     const self=currentUser?.id;
     const safePlayers=(players||[]).filter(p=>p&&p.id&&p.username);
+    let requests=[];
+    if(self&&client){
+      const [sent,received]=await Promise.all([
+        client.from('friend_requests').select('id,status,sender_id,receiver_id').eq('sender_id',self).limit(500),
+        client.from('friend_requests').select('id,status,sender_id,receiver_id').eq('receiver_id',self).limit(500)
+      ]);
+      if(sent.error)throw new Error('Could not load sent friend requests: '+sent.error.message);
+      if(received.error)throw new Error('Could not load received friend requests: '+received.error.message);
+      requests=[...(sent.data||[]),...(received.data||[])];
+    }
+    const byPlayer=new Map();
+    for(const request of requests){
+      const other=String(request.sender_id)===String(self)?String(request.receiver_id):String(request.sender_id);
+      const previous=byPlayer.get(other);
+      if(request.status==='accepted'||!previous)byPlayer.set(other,request);
+    }
     let html='<ul class="people-results">';
     for(const p of safePlayers){
       const isSelf=!!self&&String(p.id)===String(self);let state='none',action='';
       if(!isSelf&&currentUser){
-        if(client){
-          const {data,error}=await client.from('friend_requests').select('id,status,sender_id,receiver_id').or(`and(sender_id.eq.${self},receiver_id.eq.${p.id}),and(sender_id.eq.${p.id},receiver_id.eq.${self})`).limit(1).maybeSingle();
-          if(!error&&data)state=data.status==='accepted'?'Friends':data.sender_id===self?'Request Sent':data.status==='pending'?'Respond in Your Friends':'none';
-        }
+        const request=byPlayer.get(String(p.id));
+        if(request){if(request.status==='accepted')state='Friends';else if(String(request.sender_id)===String(self))state='Request Sent';else if(request.status==='pending')state='Respond in Your Friends';}
         action=state==='none'?`<button class="classic-button" type="button" data-friend-request="${escapeHTML(p.id)}">Add Friend</button>`:`<span>${escapeHTML(state)}</span>`;
       }
       html+=`<li><a href="/profile.html?id=${encodeURIComponent(p.id)}">${escapeHTML(p.username)}</a>${isSelf?' (You)':''} ${action}</li>`;
@@ -177,11 +188,13 @@
     if(!currentUser){out.innerHTML='<p>Create an account or log in to find players.</p>';return;}
     if(!client){out.innerHTML='<p>Please log in to find players.</p>';openAuth('signup');return;}
     out.textContent='Loading players…';
-    let query=client.from('profiles').select('id,username,created_at').order('created_at',{ascending:false}).limit(100);
-    if(q)query=query.ilike('username','%'+q.replace(/[%,_]/g,'')+'%');
-    const {data,error}=await query;
-    if(error){out.textContent='Could not load players: '+error.message;console.error('People query failed:',error);return;}
-    await renderPeopleResults(data||[]);
+    try {
+      let query=client.from('profiles').select('id,username,created_at').order('created_at',{ascending:false}).limit(100);
+      if(q)query=query.ilike('username','%'+q.replace(/[%,_]/g,'')+'%');
+      const {data,error}=await query;
+      if(error)throw new Error(error.message||'Player search failed');
+      await renderPeopleResults(data||[]);
+    } catch(error) { out.textContent='Could not load players: '+(error.message||'request failed')+' '; const retry=document.createElement('button');retry.className='classic-button';retry.textContent='Try again';retry.addEventListener('click',()=>searchPeople(q));out.appendChild(retry);console.error('People query failed:',error); }
   }
   on('peopleSearch','submit',async e=>{e.preventDefault();const q=$('peopleQuery').value.trim();$('peopleResult').textContent='Searching…';await searchPeople(q)});
   document.addEventListener('click',async e=>{const b=e.target.closest('[data-friend-request]');if(!b)return;if(!currentUser){toast('Please log in to add friends.');openAuth('login');return}const receiver=b.dataset.friendRequest;if(receiver===currentUser.id)return;b.disabled=true;if(client){const {error}=await client.from('friend_requests').insert({sender_id:currentUser.id,receiver_id:receiver,status:'pending'});if(error)toast(error.code==='23505'?'A request already exists.':error.message);else toast('Friend request sent.')}else{toast('Please try again after reloading the page.');return}await searchPeople($('peopleQuery')?.value.trim()||'')});
@@ -214,7 +227,7 @@
   let catalogItems=[...catalogSeed], selectedCatalogCategory='all', currentEquipped={}, bodyColors={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'}, avatarRenderers=[], publicProfileRenderer=null;
   let equippedKey='', colorKey='', coinsKey='';
   function escapeHTML(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-  async function getOwned(){if(!client||!currentUser)return [];const {data}=await client.from('inventory').select('item_id').eq('user_id',currentUser.id);return (data||[]).map(x=>x.item_id)}
+  async function getOwned(){if(!client||!currentUser)return [];const {data,error}=await client.from('inventory').select('item_id').eq('user_id',currentUser.id);if(error)throw new Error(error.message||'Could not load your inventory');return Array.isArray(data)?data.map(x=>String(x.item_id)):[]}
   async function getCoins(){if(!client||!currentUser)return 0;const {data}=await client.from('profiles').select('coins').eq('id',currentUser.id).maybeSingle();return Number(data?.coins??0)}
   function updateCoinLabels(n){['catalogCoins','avatarCoins'].forEach(id=>{if($(id))$(id).textContent='Blockos Coins: '+n})}
   function iconMarkup(i){if(i.category==='face')return `<img class="item-2d-face" src="${escapeHTML(i.image_url||'/assets/faces/classic-smile.svg')}" alt="${escapeHTML(i.name)}">`;if(i.category==='shirt'||i.category==='tshirt'||i.category==='pants')return `<img class="clothing-art ${i.category}" src="/assets/clothing/${escapeHTML(i.id)}.svg" alt="${escapeHTML(i.name)}">`;return `<canvas class="item-3d-preview" data-preview="${escapeHTML(i.id)}" aria-label="3D preview of ${escapeHTML(i.name)}"></canvas>`}
@@ -244,17 +257,17 @@
   async function renderCatalog(host,token){
     const category=selectedCatalogCategory,q=($('catalogSearch')?.value||'').trim().toLowerCase();
     const items=catalogItems.filter(i=>(category==='all'||i.category===category)&&(!q||(String(i.name)+' '+String(i.description||'')+' '+String(i.category)).toLowerCase().includes(q)));
-    let owned=[],coins=0;
-    try{owned=await Promise.race([getOwned(),new Promise(resolve=>setTimeout(()=>resolve([]),2500))])||[]}catch(e){console.warn('Could not load inventory for catalog.',e);owned=[]}
+    let owned=[],coins=0,ownedLoadError=null;
+    try{owned=await getOwned()}catch(e){console.warn('Could not load inventory for catalog.',e);ownedLoadError=e}
     try{coins=await Promise.race([getCoins(),new Promise(resolve=>setTimeout(()=>resolve(0),2500))])}catch(e){console.warn('Could not load coin balance.',e);coins=0}
     if(token!==catalogLoadToken)return;
     updateCoinLabels(coins);
-    host.innerHTML=items.map(i=>`<article class="catalog-item" id="${escapeHTML(i.id)}"><div class="item-icon">${iconMarkup(i)}</div><a class="item-name" href="/item.html?id=${encodeURIComponent(i.id)}">${escapeHTML(i.name)}</a><p>Updated: Recently</p><p>Creator: <a href="/profile.html?user=${encodeURIComponent(i.creator||'Blockos Ville')}">${escapeHTML(i.creator||'Blockos Ville')}</a></p><p>Number Sold: ${Number(i.sold_count ?? 0)}</p><p>Favorited: 0 times</p><p class="price">${Number(i.price)===0?'Free':`BC: ${Number(i.price)}`}</p>${owned.includes(i.id)?'<p class="owned">Owned</p>':'<button class="classic-button blue-button" data-buy="'+escapeHTML(i.id)+'">Buy</button>'}</article>`).join('')||'<p>No items found.</p>';
+    host.innerHTML=items.map(i=>`<article class="catalog-item" id="${escapeHTML(i.id)}"><div class="item-icon">${iconMarkup(i)}</div><a class="item-name" href="/item.html?id=${encodeURIComponent(i.id)}">${escapeHTML(i.name)}</a><p>Updated: Recently</p><p>Creator: <a href="/profile.html?user=${encodeURIComponent(i.creator||'Blockos Ville')}">${escapeHTML(i.creator||'Blockos Ville')}</a></p><p>Number Sold: ${Number(i.sold_count ?? 0)}</p><p>Favorited: 0 times</p><p class="price">${Number(i.price)===0?'Free':`BC: ${Number(i.price)}`}</p>${owned.includes(i.id)?'<p class="owned">Owned</p>':ownedLoadError?'<p class="owned-status-error">Ownership unavailable — retry after connection returns.</p>':'<button class="classic-button blue-button" data-buy="'+escapeHTML(i.id)+'">Buy</button>'}</article>`).join('')||'<p>No items found.</p>';
     const notice=$('catalogNotice');if(notice)notice.textContent=`You have ${coins} Blockos Coins. Buy items here, then equip them in Avatar.`;
     host.querySelectorAll('[data-buy]').forEach(b=>b.addEventListener('click',()=>buyItem(b.dataset.buy)));
     host.querySelectorAll('.item-3d-preview').forEach(c=>makeItemPreview(c,c.dataset.preview));
   }
-  async function buyItem(id){const item=catalogItems.find(x=>x.id===id);if(!item)return;if(!currentUser||!client){openAuth('signup');return}const {data,error}=await client.rpc('purchase_catalog_item',{p_item_id:id});if(error){toast(error.message);return}toast(data==='owned'?'You already own this item.':'Item purchased!');await loadCatalog();await loadAvatarInventory()}
+  async function buyItem(id){const item=catalogItems.find(x=>x.id===id);if(!item)return;if(!currentUser||!client){openAuth('signup');return}const {data,error}=await client.rpc('purchase_catalog_item',{p_item_id:id});if(error){toast(error.message);return}const result=data?.data??data;toast(result==='owned'?'You already own this item.':'Item purchased!');await loadCatalog();await loadAvatarInventory()}
   async function equipItem(id){if(!currentUser||!client){openAuth('signup');return}const item=catalogItems.find(x=>x.id===id);if(!item)return;const owned=await getOwned();if(!owned.includes(id)){toast('You must buy this item first.');return}const {error}=await client.rpc('equip_catalog_item',{p_item_id:id});if(error){toast(error.message);return}toast('Item equipped.');await loadAvatarInventory()}
   async function unequipCategory(cat){if(!currentUser||!client){openAuth('signup');return}const {error}=await client.from('avatar_equipped').delete().eq('user_id',currentUser.id).eq('category',cat);if(error){toast(error.message);return}await loadAvatarInventory()}
   async function loadAvatarInventory(){
@@ -265,19 +278,33 @@
       if(host)host.innerHTML='<p>Create an account or log in to view your wardrobe.</p>';
       return;
     }
-    const owned=await getOwned();
-    if((currentUser?.id||null)!==requestedUserId)return;
-    currentEquipped={};
-    if(client){
-      const {data}=await client.from('avatar_equipped').select('category,item_id').eq('user_id',requestedUserId);
+    if(host)host.innerHTML='<p>Loading your inventory…</p>';
+    try {
+      const owned=await getOwned();
       if((currentUser?.id||null)!==requestedUserId)return;
-      currentEquipped=Object.fromEntries((data||[]).map(x=>[x.category,x.item_id]));
-      const {data:p}=await client.from('profiles').select('body_colors').eq('id',requestedUserId).maybeSingle();
+      currentEquipped={};
+      const [{data:eq,error:eqError},{data:p,error:profileError}]=await Promise.all([
+        client.from('avatar_equipped').select('category,item_id').eq('user_id',requestedUserId),
+        client.from('profiles').select('body_colors').eq('id',requestedUserId).maybeSingle()
+      ]);
+      if(eqError)throw new Error('Could not load equipped items: '+eqError.message);
+      if(profileError)throw new Error('Could not load avatar colors: '+profileError.message);
       if((currentUser?.id||null)!==requestedUserId)return;
+      currentEquipped=Object.fromEntries((eq||[]).map(x=>[x.category,x.item_id]));
       bodyColors={...DEFAULT_BODY_COLORS,...(p?.body_colors||{})};
-    }else{resetSignedOutState();if(host)host.innerHTML='<p>Please try again after reloading the page.</p>';return;}
-    const categories=['head','face','hat','tshirt','shirt','pants'];const label=$('avatarEquipped');if(label)label.innerHTML=categories.filter(c=>currentEquipped[c]).map(c=>{const i=catalogItems.find(x=>x.id===currentEquipped[c]);return i?`<div class="equipped-item"><b>${escapeHTML(c.toUpperCase())}</b> ${escapeHTML(i.name)} <button class="classic-button" data-remove="${c}">Remove</button></div>`:''}).join('')||'No items equipped yet.';
-    if(host){host.innerHTML=owned.map(id=>{const i=catalogItems.find(x=>x.id===id);if(!i)return '';return `<article class="catalog-item inventory-item"><div class="item-icon">${iconMarkup(i)}</div><a class="item-name" href="/item.html?id=${encodeURIComponent(i.id)}">${escapeHTML(i.name)}</a><p>${escapeHTML(i.category.toUpperCase())}</p>${currentEquipped[i.category]===id?'<p class="owned">Equipped</p>':'<button class="classic-button blue-button" data-equip="'+escapeHTML(id)+'">Wear</button>'}</article>`}).join('')||'<p>Your wardrobe is empty. <a href="/catalog.html">Shop the Catalog</a>.</p>';host.querySelectorAll('[data-equip]').forEach(b=>b.addEventListener('click',()=>equipItem(b.dataset.equip)));host.querySelectorAll('.item-3d-preview').forEach(c=>makeItemPreview(c,c.dataset.preview));}label?.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>unequipCategory(b.dataset.remove)));updateCoinLabels(await getCoins());avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));}
+      const categories=['head','face','hat','tshirt','shirt','pants'];
+      const label=$('avatarEquipped');
+      if(label)label.innerHTML=categories.filter(c=>currentEquipped[c]).map(c=>{const i=catalogItems.find(x=>x.id===currentEquipped[c]);return i?`<div class="equipped-item"><b>${escapeHTML(c.toUpperCase())}</b> ${escapeHTML(i.name)} <button class="classic-button" data-remove="${c}">Remove</button></div>`:''}).join('')||'No items equipped yet.';
+      if(host){host.innerHTML=owned.map(id=>{const i=catalogItems.find(x=>x.id===id);if(!i)return '';return `<article class="catalog-item inventory-item"><div class="item-icon">${iconMarkup(i)}</div><a class="item-name" href="/item.html?id=${encodeURIComponent(i.id)}">${escapeHTML(i.name)}</a><p>${escapeHTML(i.category.toUpperCase())}</p>${currentEquipped[i.category]===id?'<p class="owned">Equipped</p>':'<button class="classic-button blue-button" data-equip="'+escapeHTML(id)+'">Wear</button>'}</article>`}).join('')||'<p>Your wardrobe is empty. <a href="/catalog.html">Shop the Catalog</a>.</p>';host.querySelectorAll('[data-equip]').forEach(b=>b.addEventListener('click',()=>equipItem(b.dataset.equip)));host.querySelectorAll('.item-3d-preview').forEach(c=>makeItemPreview(c,c.dataset.preview));}
+      label?.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>unequipCategory(b.dataset.remove)));
+      updateCoinLabels(await getCoins());
+      avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));
+    } catch(error) {
+      console.error('Avatar inventory load failed:',error);
+      if(host)host.innerHTML='<p>Could not load your wardrobe: '+escapeHTML(error.message||'request failed')+'. <button class="classic-button" id="retryAvatarInventory" type="button">Try again</button></p>';
+      on('retryAvatarInventory','click',loadAvatarInventory);
+    }
+  }
   on('catalogSearchButton','click',loadCatalog);on('catalogSearch','keydown',e=>{if(e.key==='Enter')loadCatalog()});document.querySelectorAll('[data-category]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();const c=a.dataset.category;selectedCatalogCategory=c;document.querySelectorAll('[data-category]').forEach(x=>x.classList.toggle('selected',x===a));loadCatalog()}));document.querySelectorAll('[data-wardrobe]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();const cat=a.dataset.wardrobe;document.querySelectorAll('#avatarInventory .inventory-item').forEach(card=>{card.style.display=cat==='all'||card.querySelector('p')?.textContent===cat.toUpperCase()?'':'none'})}));
   async function saveBodyColors(){const part=$('bodyPart')?.value,color=$('bodyColor')?.value;if(!part||!color)return;bodyColors[part]=color;if(client&&currentUser){const {error}=await client.from('profiles').update({body_colors:bodyColors}).eq('id',currentUser.id);if(error){toast('Could not save color: '+error.message);return}}else{openAuth('signup');return}avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));toast('Color applied.');}
   on('applyBodyColor','click',saveBodyColors);document.querySelectorAll('.classic-color-swatches [data-color]').forEach(b=>b.addEventListener('click',()=>{if($('bodyColor'))$('bodyColor').value=b.dataset.color;saveBodyColors()}));on('redrawAvatar','click',e=>{e.preventDefault();avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));});
