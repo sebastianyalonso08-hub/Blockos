@@ -27,8 +27,14 @@
         try{
           const active=JSON.parse(raw);
           const users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');
-          for(const [userKey,userRecord] of Object.entries(users)){if(!userRecord.id)userRecord.id='demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));}
+          const legacyIds={};
+          for(const [userKey,userRecord] of Object.entries(users)){
+            const oldId=userRecord.id||('demo-'+userKey);
+            if(!userRecord.id)userRecord.id='demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));
+            legacyIds[oldId]=userRecord.id;
+          }
           localStorage.setItem('blockos_demo_users',JSON.stringify(users));
+          try{const requests=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]');let changed=false;for(const req of requests){if(legacyIds[req.from]){req.from=legacyIds[req.from];changed=true;}if(legacyIds[req.to]){req.to=legacyIds[req.to];changed=true;}}if(changed)localStorage.setItem('blockos_demo_friend_requests',JSON.stringify(requests));}catch{}
           const key=String(active.username||'').toLowerCase();
           const record=users[key];
           if(record){
@@ -45,7 +51,32 @@
     await loadFriendsPage();
   }
   form?.addEventListener('submit',async e=>{e.preventDefault();const username=$('username').value.trim(),password=$('password').value;const email=authAlias(username);$('authSubmit').disabled=true;setMessage('');try{if(!/^[a-zA-Z0-9_]{3,20}$/.test(username))throw Error('Username must be 3–20 letters, numbers or underscores.');if(password.length<8)throw Error('Password must be at least 8 characters.');if(client){if(mode==='signup'){const {data,error}=await client.auth.signUp({email,password,options:{data:{username}}});if(error)throw error;if(data.session){displayUser(data.user,username);toast('Account created.')}else setMessage('Account created. If confirmation is enabled, disable email confirmation in Supabase Auth to use username-only accounts.')}else{const {data,error}=await client.auth.signInWithPassword({email,password});if(error)throw Error('Login failed. Check your username and password.');displayUser(data.user,username);toast('Signed in.')}}else{const users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');const key=username.toLowerCase();if(mode==='signup'){if(users[key])throw Error('That username is already registered in this browser.');users[key]={id:'demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2)),username,password,created_at:new Date().toISOString(),description:'',body_colors:null};localStorage.setItem('blockos_demo_users',JSON.stringify(users));localStorage.setItem('blockos_demo_user',JSON.stringify({id:users[key].id,username}));displayUser({id:users[key].id,email,user_metadata:{username}},username);toast('Demo account created in this browser only.')}else{if(!users[key]||users[key].password!==password)throw Error('Login failed. Check your username and password.');if(!users[key].id)users[key].id='demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));localStorage.setItem('blockos_demo_users',JSON.stringify(users));localStorage.setItem('blockos_demo_user',JSON.stringify({id:users[key].id,username:users[key].username}));displayUser({id:users[key].id,email,user_metadata:{username:users[key].username}},users[key].username);toast('Signed in (demo).')}}}catch(err){setMessage(err.message||'Could not complete request.',true)}finally{$('authSubmit').disabled=false;$('authSubmit').textContent=mode==='signup'?'Create Account':'Log In'}});
-  async function signOut(){if(client){const {error}=await client.auth.signOut();if(error){toast(error.message);return}}localStorage.removeItem('blockos_demo_user');currentUser=null;currentEquipped={};bodyColors={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'};displayUser(null);avatarRenderers.forEach(r=>r.update(bodyColors,{},catalogItems));loadAvatarInventory();loadCatalog().then(()=>renderItemDetail());toast('Signed out. You are now Guest.');}
+  async function signOut(){
+    if(client){
+      const {error}=await client.auth.signOut();
+      if(error){toast(error.message);return}
+    }
+    localStorage.removeItem('blockos_demo_user');
+    currentUser=null;
+    resetGuestAvatar();
+    displayUser(null);
+    await loadAvatarInventory();
+    await loadCatalog();
+    renderItemDetail();
+    await loadPublicProfile();
+    await searchPeople($('peopleQuery')?.value.trim()||'');
+    await loadFriendsPage();
+    toast('Signed out. You are now Guest.');
+  }
+  const DEFAULT_BODY_COLORS={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'};
+  function resetGuestAvatar(){
+    currentEquipped={};
+    bodyColors={...DEFAULT_BODY_COLORS};
+    avatarRenderers.forEach(r=>r.update(bodyColors,{},catalogItems));
+    const label=$('avatarEquipped');if(label)label.textContent='No items equipped yet.';
+    const host=$('avatarInventory');if(host)host.innerHTML='<p>Sign in to see your wardrobe. <a href="/catalog.html">Shop the Catalog</a>.</p>';
+    updateCoinLabels(100);
+  }
   on('openAuth','click',()=>currentUser?signOut():openAuth('login'));on('headerSignup','click',()=>openAuth('signup'));on('profileAction','click',()=>currentUser?signOut():openAuth('signup'));on('signupTab','click',()=>setMode('signup'));on('loginTab','click',()=>setMode('login'));on('closeAuth','click',closeAuth);modal?.addEventListener('click',e=>{if(e.target===modal)closeAuth()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&modal&&!modal.classList.contains('hidden'))closeAuth()});
   document.querySelectorAll('[data-game]').forEach(b=>b.addEventListener('click',()=>toast('“'+b.dataset.game+'” is not connected to a playable world yet.')));
   // Forum threads and replies use Supabase when configured. Demo mode is explicitly local.
@@ -53,43 +84,118 @@
   on('forumForm','submit',async e=>{e.preventDefault();if(!currentUser){toast('Please sign in to publish.');openAuth('login');return}const title=$('forumTitle').value.trim(),body=$('forumBody').value.trim(),category=$('forumCategory').value;if(!title||!body)return;const post={title,body,category,user_id:currentUser.id};if(client){const {error}=await client.from('forum_posts').insert(post);if(error){toast('Could not publish: '+error.message);return}}else{const arr=JSON.parse(localStorage.getItem('blockos_demo_forum')||'[]');arr.unshift({...post,author:currentUser.user_metadata?.username||currentUser.email,created_at:new Date().toISOString()});localStorage.setItem('blockos_demo_forum',JSON.stringify(arr))}e.target.reset();toast('Topic published.');loadForum()});loadForum();
   // Help form records support requests in Supabase, or explains the demo limitation.
   on('helpForm','submit',async e=>{e.preventDefault();if(!currentUser){toast('Please sign in to send a support request.');openAuth('login');return}const subject=$('helpSubject').value.trim(),details=$('helpDetails').value.trim(),out=$('helpMessage');if(!client){out.textContent='Demo mode: connect Supabase to submit a persistent request.';return}const {error}=await client.from('support_requests').insert({user_id:currentUser.id,subject,details});out.textContent=error?'Could not submit: '+error.message:'Request submitted. The team does not have a support dashboard yet. Save this confirmation number: BV-'+Date.now().toString().slice(-6);if(!error)e.target.reset()});
-  // Public profiles use immutable account UUIDs when available; username URLs remain supported.
+  // My Profile resolves the signed-in account first, then loads the requested immutable account ID.
+  // Username URLs are supported only as a compatibility fallback.
   async function loadPublicProfile(){
-    if(!$('publicProfile'))return;
-    const params=new URLSearchParams(location.search), requestedId=params.get('id'), requestedName=params.get('user');
-    const isOwn=!requestedId&&!requestedName;
+    const host=$('publicProfile'); if(!host)return;
+    const params=new URLSearchParams(location.search);
+    const requestedId=params.get('id');
+    const requestedName=params.get('user')||params.get('username');
+    host.innerHTML='<p>Loading profile…</p>';
     let profile=null, ownerId=null;
     if(client){
-      let query=client.from('profiles').select('id,username,created_at,description');
-      if(requestedId)query=query.eq('id',requestedId);else if(requestedName)query=query.eq('username',requestedName);else if(currentUser)query=query.eq('id',currentUser.id);else { $('publicProfile').innerHTML='<p>Sign in to view your profile, or visit People to find a player.</p>';return; }
-      const result=await query.maybeSingle(); profile=result.data; ownerId=profile?.id;
-      if(result.error){$('publicProfile').textContent='Could not load profile. Run the updated supabase/schema.sql.';return;}
-    } else {
-      let demo={};try{demo=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}')}catch{}
-      const raw=localStorage.getItem('blockos_demo_user');let active=null;try{active=JSON.parse(raw||'null')}catch{}
-      const target=requestedName||active?.username;
-      if(!target&&!requestedId){$('publicProfile').innerHTML='<p>Sign in to view your profile, or visit People to find a player.</p>';return;}
-      const record=requestedId?Object.values(demo).find(u=>u.id===requestedId):demo[String(target||'').toLowerCase()];if(record)profile={id:record.id||('demo-'+String(record.username||target).toLowerCase()),username:record.username,created_at:record.created_at||new Date().toISOString(),description:record.description||'',body_colors:record.body_colors||{}};
-      if(!profile && active?.username?.toLowerCase()===String(target||'').toLowerCase())profile={id:active.id,username:active.username,created_at:active.created_at||new Date().toISOString(),description:active.description||'',body_colors:active.body_colors||{}};ownerId=profile?.id;
+      if(!requestedId&&!requestedName&&!currentUser){host.innerHTML='<p>Sign in to view your profile, or visit People to find a player.</p>';return;}
+      let query=client.from('profiles').select('id,username,created_at,description,body_colors');
+      if(requestedId)query=query.eq('id',requestedId);
+      else if(requestedName)query=query.ilike('username',requestedName);
+      else query=query.eq('id',currentUser.id);
+      const {data,error}=await query.maybeSingle();
+      if(error){console.error('Profile lookup failed:',error);host.innerHTML='<p>Could not load this profile. Check the profiles table and its Row Level Security policies.</p>';return;}
+      profile=data; ownerId=data?.id||null;
+    }else{
+      let users={};let active=null;
+      try{users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}')}catch{}
+      try{active=JSON.parse(localStorage.getItem('blockos_demo_user')||'null')}catch{}
+      // Migrate old demo accounts once; every account receives a stable ID independent of username.
+      let changed=false;
+      for(const [key,u] of Object.entries(users)){
+        if(!u.id){u.id='demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));changed=true;}
+        if(!u.username)u.username=key;
+      }
+      if(changed)localStorage.setItem('blockos_demo_users',JSON.stringify(users));
+      const entries=Object.entries(users);
+      let found=null;
+      if(requestedId)found=entries.find(([,u])=>u.id===requestedId)?.[1]||null;
+      else if(requestedName)found=entries.find(([key,u])=>key.toLowerCase()===requestedName.toLowerCase()||String(u.username).toLowerCase()===requestedName.toLowerCase())?.[1]||null;
+      else if(currentUser?.id)found=entries.find(([,u])=>u.id===currentUser.id)?.[1]||null;
+      if(!found&&active?.id)found=entries.find(([,u])=>u.id===active.id)?.[1]||null;
+      if(found){profile={id:found.id,username:found.username,created_at:found.created_at||new Date().toISOString(),description:found.description||'',body_colors:found.body_colors||{}};ownerId=found.id;}
     }
-    if(!profile){$('publicProfile').innerHTML='<h2>Player not found</h2><p>This account could not be found.</p>';return;}
-    const own=!!currentUser&&ownerId===currentUser.id || !client&&ownerId===currentUser?.id;
-    if($('profileName'))$('profileName').textContent=profile.username;
+    if(!profile){host.innerHTML='<h2>Player not found</h2><p>This account could not be found. Open the player from the People page so the profile link uses the correct account ID.</p>';return;}
+    const own=!!currentUser&&String(ownerId)===String(currentUser.id);
+    const name=profile.username||'Player';
+    if($('profileName'))$('profileName').textContent=name;
     if($('profileMessage'))$('profileMessage').textContent='Account ID: '+profile.id;
-    const action=$('profileAction');if(action){action.classList.toggle('hidden',!own);action.textContent='Sign Out';}
+    const action=$('profileAction');if(action){action.classList.toggle('hidden',!own);action.textContent=own?'Sign Out':'Create Account';}
     const details=document.querySelector('.profile-details');
-    if(details){details.innerHTML=`<h2>${escapeHTML(profile.username)}</h2><p><b>Account ID:</b> <code>${escapeHTML(profile.id)}</code></p><p><b>Member since:</b> ${new Date(profile.created_at).toLocaleDateString('en-US')}</p><hr><h2>Description</h2><p id="profileDescriptionText">${escapeHTML(profile.description||'This user has not written a description yet.')}</p>${own?'<form id="descriptionForm"><label for="profileDescriptionInput">Edit your description</label><textarea id="profileDescriptionInput" maxlength="500" rows="5" placeholder="Tell everyone a little about yourself..."></textarea><button class="classic-button blue-button" type="submit">Save Description</button><p id="descriptionStatus" role="status"></p></form>':''}`;
+    if(details){
+      details.innerHTML=`<h2>${escapeHTML(name)}</h2><p><b>Account ID:</b> <code>${escapeHTML(profile.id)}</code></p><p><b>Member since:</b> ${new Date(profile.created_at).toLocaleDateString('en-US')}</p><hr><h2>Description</h2><p id="profileDescriptionText">${escapeHTML(profile.description||'This user has not written a description yet.')}</p>${own?'<form id="descriptionForm"><label for="profileDescriptionInput">Edit your description</label><textarea id="profileDescriptionInput" maxlength="500" rows="5" placeholder="Tell everyone a little about yourself..."></textarea><button class="classic-button blue-button" type="submit">Save Description</button><p id="descriptionStatus" role="status"></p></form>':''}`;
       if(own&&$('profileDescriptionInput'))$('profileDescriptionInput').value=profile.description||'';
-      on('descriptionForm','submit',async e=>{e.preventDefault();const value=$('profileDescriptionInput').value.trim(),status=$('descriptionStatus');if(client){const {error}=await client.from('profiles').update({description:value}).eq('id',currentUser.id);if(error){status.textContent='Could not save description. Run the updated schema.sql.';return}}else{let users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');const key=(currentUser?.user_metadata?.username||'').toLowerCase();if(users[key]){users[key].description=value;localStorage.setItem('blockos_demo_users',JSON.stringify(users))}const active=JSON.parse(localStorage.getItem('blockos_demo_user')||'{}');active.description=value;localStorage.setItem('blockos_demo_user',JSON.stringify(active))}profile.description=value;$('profileDescriptionText').textContent=value||'This user has not written a description yet.';status.textContent='Description saved.';});
+      on('descriptionForm','submit',async e=>{
+        e.preventDefault();if(!currentUser||String(currentUser.id)!==String(ownerId))return;
+        const value=$('profileDescriptionInput').value.trim(),status=$('descriptionStatus');
+        if(client){const {error}=await client.from('profiles').update({description:value}).eq('id',currentUser.id);if(error){status.textContent='Could not save description: '+error.message;return;}}
+        else{let users={};try{users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}')}catch{}const entry=Object.values(users).find(u=>u.id===currentUser.id);if(!entry){status.textContent='Could not find this local account.';return;}entry.description=value;localStorage.setItem('blockos_demo_users',JSON.stringify(users));const active=JSON.parse(localStorage.getItem('blockos_demo_user')||'{}');active.id=currentUser.id;active.description=value;localStorage.setItem('blockos_demo_user',JSON.stringify(active));}
+        profile.description=value;$('profileDescriptionText').textContent=value||'This user has not written a description yet.';status.textContent='Description saved.';
+      });
     }
-    const stage=$('profileAvatar');if(stage){if(own){avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));}else if(client&&ownerId){const renderer=makeAvatar(stage,false);const {data:profileData}=await client.from('profiles').select('body_colors').eq('id',ownerId).maybeSingle();const {data:eq}=await client.from('avatar_equipped').select('category,item_id').eq('user_id',ownerId);renderer?.update({...bodyColors,...(profileData?.body_colors||{})},Object.fromEntries((eq||[]).map(x=>[x.category,x.item_id])),catalogItems);} }
+    const stage=$('profileAvatar');
+    if(stage){
+      if(own){publicProfileRenderer?.update(bodyColors,currentEquipped,catalogItems);}
+      else if(client&&ownerId){
+        const [{data:colorData},{data:eq}]=await Promise.all([
+          client.from('profiles').select('body_colors').eq('id',ownerId).maybeSingle(),
+          client.from('avatar_equipped').select('category,item_id').eq('user_id',ownerId)
+        ]);
+        publicProfileRenderer?.update({...bodyColors,...(colorData?.body_colors||profile.body_colors||{})},Object.fromEntries((eq||[]).map(x=>[x.category,x.item_id])),catalogItems);
+      }else{publicProfileRenderer?.update({...bodyColors,...(profile.body_colors||{})},{},catalogItems);}
+    }
   }
   document.querySelectorAll('.wear-button').forEach(b=>b.addEventListener('click',()=>toast('The clothing editor is still in development.')));
-  async function renderPeopleResults(players){const out=$('peopleResult');if(!out)return;const self=currentUser?.id;let html='<ul class="people-results">';for(const p of players){const isSelf=self&&p.id===self;let label=isSelf?'You': 'Add Friend';let action='';if(!isSelf&&currentUser){let state='none';if(client){const {data}=await client.from('friend_requests').select('id,status,sender_id,receiver_id').or(`and(sender_id.eq.${self},receiver_id.eq.${p.id}),and(sender_id.eq.${p.id},receiver_id.eq.${self})`).maybeSingle();if(data)state=data.status==='accepted'?'Friends':data.sender_id===self?'Request Sent':'Respond in Your Friends';}else{const req=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]').find(x=>(x.from===self&&x.to===p.id)||(x.from===p.id&&x.to===self));if(req)state=req.status==='accepted'?'Friends':req.from===self?'Request Sent':'Respond in Your Friends'}label=state==='none'?'Add Friend':state;if(state==='none')action=`<button class="classic-button" data-friend-request="${escapeHTML(p.id)}">Add Friend</button>`;else action=`<span>${escapeHTML(state)}</span>`;}html+=`<li><a href="/profile.html?id=${encodeURIComponent(p.id)}">${escapeHTML(p.username)}</a>${isSelf?' (You)':''} ${action}</li>`}out.innerHTML=html+'</ul>';}
-  async function searchPeople(q=''){const out=$('peopleResult');if(!out)return;if(client){let query=client.from('profiles').select('id,username,created_at').order('created_at',{ascending:false}).limit(50);if(q)query=query.ilike('username','%'+q.replace(/[%_]/g,'')+'%');const {data,error}=await query;if(error){out.textContent='Could not load players: '+error.message;return}await renderPeopleResults(data||[])}else{let demo=[];try{demo=Object.entries(JSON.parse(localStorage.getItem('blockos_demo_users')||'{}')).map(([key,u])=>({id:u.id||('demo-'+key),username:u.username}))}catch{}if(q)demo=demo.filter(p=>p.username.toLowerCase().includes(q.toLowerCase()));await renderPeopleResults(demo)}}
-  on('peopleSearch','submit',async e=>{e.preventDefault();const q=$('peopleQuery').value.trim();$('peopleResult').textContent='Searching…';await searchPeople(q)});if($('peopleResult'))searchPeople();
+  async function renderPeopleResults(players){
+    const out=$('peopleResult');if(!out)return;
+    const self=currentUser?.id;
+    const safePlayers=(players||[]).filter(p=>p&&p.id&&p.username);
+    let html='<ul class="people-results">';
+    for(const p of safePlayers){
+      const isSelf=!!self&&String(p.id)===String(self);let state='none',action='';
+      if(!isSelf&&currentUser){
+        if(client){
+          const {data,error}=await client.from('friend_requests').select('id,status,sender_id,receiver_id').or(`and(sender_id.eq.${self},receiver_id.eq.${p.id}),and(sender_id.eq.${p.id},receiver_id.eq.${self})`).limit(1).maybeSingle();
+          if(!error&&data)state=data.status==='accepted'?'Friends':data.sender_id===self?'Request Sent':data.status==='pending'?'Respond in Your Friends':'none';
+        }else{
+          let requests=[];try{requests=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]')}catch{}
+          const req=requests.find(x=>(String(x.from)===String(self)&&String(x.to)===String(p.id))||(String(x.from)===String(p.id)&&String(x.to)===String(self)));
+          if(req)state=req.status==='accepted'?'Friends':String(req.from)===String(self)?'Request Sent':req.status==='pending'?'Respond in Your Friends':'none';
+        }
+        action=state==='none'?`<button class="classic-button" type="button" data-friend-request="${escapeHTML(p.id)}">Add Friend</button>`:`<span>${escapeHTML(state)}</span>`;
+      }
+      html+=`<li><a href="/profile.html?id=${encodeURIComponent(p.id)}">${escapeHTML(p.username)}</a>${isSelf?' (You)':''} ${action}</li>`;
+    }
+    out.innerHTML=html+'</ul>';
+    if(!safePlayers.length)out.innerHTML='<p>No players found.</p>';
+  }
+  async function searchPeople(q=''){
+    const out=$('peopleResult');if(!out)return;
+    out.textContent='Loading players…';
+    if(client){
+      let query=client.from('profiles').select('id,username,created_at').order('created_at',{ascending:false}).limit(100);
+      if(q)query=query.ilike('username','%'+q.replace(/[%,_]/g,'')+'%');
+      const {data,error}=await query;
+      if(error){out.textContent='Could not load players: '+error.message;console.error('People query failed:',error);return;}
+      await renderPeopleResults(data||[]);
+    }else{
+      let users={};try{users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}')}catch{}
+      let changed=false;
+      const demo=Object.entries(users).map(([key,u])=>{if(!u.id){u.id='demo-'+(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));changed=true;}return{id:u.id,username:u.username||key,created_at:u.created_at||null};});
+      if(changed)localStorage.setItem('blockos_demo_users',JSON.stringify(users));
+      const filtered=q?demo.filter(p=>p.username.toLowerCase().includes(q.toLowerCase())):demo;
+      await renderPeopleResults(filtered);
+    }
+  }
+  on('peopleSearch','submit',async e=>{e.preventDefault();const q=$('peopleQuery').value.trim();$('peopleResult').textContent='Searching…';await searchPeople(q)});
   document.addEventListener('click',async e=>{const b=e.target.closest('[data-friend-request]');if(!b)return;if(!currentUser){toast('Please log in to add friends.');openAuth('login');return}const receiver=b.dataset.friendRequest;if(receiver===currentUser.id)return;b.disabled=true;if(client){const {error}=await client.from('friend_requests').insert({sender_id:currentUser.id,receiver_id:receiver,status:'pending'});if(error)toast(error.code==='23505'?'A request already exists.':error.message);else toast('Friend request sent.')}else{const arr=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]');if(!arr.some(x=>x.from===currentUser.id&&x.to===receiver&&x.status==='pending'))arr.push({id:'req-'+Date.now(),from:currentUser.id,to:receiver,status:'pending',created_at:new Date().toISOString()});localStorage.setItem('blockos_demo_friend_requests',JSON.stringify(arr));toast('Friend request sent (demo).')}await searchPeople($('peopleQuery')?.value.trim()||'')});
-  async function loadFriendsPage(){const host=$('friendsContent');if(!host)return;if(!currentUser){host.innerHTML='<p>Please log in to view your friends and requests.</p>';return}if(client){const {data,error}=await client.from('friend_requests').select('id,status,sender_id,receiver_id,created_at,sender:profiles!friend_requests_sender_id_fkey(id,username),receiver:profiles!friend_requests_receiver_id_fkey(id,username)').or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`).order('created_at',{ascending:false});if(error){host.textContent='Could not load friends. Run the latest supabase/schema.sql and reload.';return}const rows=data||[];const accepted=rows.filter(r=>r.status==='accepted');const sent=rows.filter(r=>r.status==='pending'&&r.sender_id===currentUser.id);const received=rows.filter(r=>r.status==='pending'&&r.receiver_id===currentUser.id);const section=(title,items,kind)=>`<h2>${title}</h2>${items.length?'<ul>'+items.map(r=>{const other=r.sender_id===currentUser.id?r.receiver:r.sender;return `<li><a href="/profile.html?id=${encodeURIComponent(other?.id||'')}">${escapeHTML(other?.username||'Player')}</a>${kind==='received'?` <button class="classic-button blue-button" data-friend-accept="${r.id}">Accept</button> <button class="classic-button" data-friend-reject="${r.id}">Reject</button>`:kind==='sent'?' <small>Request sent</small>':''}</li>`}).join('')+'</ul>':'<p>None yet.</p>'}`;host.innerHTML=section('Your Friends',accepted,'friends')+section('Incoming Requests',received,'received')+section('Sent Requests',sent,'sent');}else{const all=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]');const rows=all.filter(r=>r.from===currentUser.id||r.to===currentUser.id);const users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');const nameFor=id=>id.startsWith('demo-')?(users[id.slice(5)]?.username||'Player'):'Player';const section=(title,items,kind)=>`<h2>${title}</h2>${items.length?'<ul>'+items.map(r=>{const other=r.from===currentUser.id?r.to:r.from;return `<li>${escapeHTML(nameFor(other))}${kind==='received'?` <button class="classic-button blue-button" data-friend-accept="${r.id}">Accept</button> <button class="classic-button" data-friend-reject="${r.id}">Reject</button>`:kind==='sent'?' <small>Request sent</small>':''}</li>`}).join('')+'</ul>':'<p>None yet.</p>'}`;host.innerHTML=section('Your Friends',rows.filter(r=>r.status==='accepted'),'friends')+section('Incoming Requests',rows.filter(r=>r.status==='pending'&&r.to===currentUser.id),'received')+section('Sent Requests',rows.filter(r=>r.status==='pending'&&r.from===currentUser.id),'sent')}}
+  async function loadFriendsPage(){const host=$('friendsContent');if(!host)return;if(!currentUser){host.innerHTML='<p>Please log in to view your friends and requests.</p>';return}if(client){const {data,error}=await client.from('friend_requests').select('id,status,sender_id,receiver_id,created_at,sender:profiles!friend_requests_sender_id_fkey(id,username),receiver:profiles!friend_requests_receiver_id_fkey(id,username)').or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`).order('created_at',{ascending:false});if(error){host.textContent='Could not load friends. Run the latest supabase/schema.sql and reload.';return}const rows=data||[];const accepted=rows.filter(r=>r.status==='accepted');const sent=rows.filter(r=>r.status==='pending'&&r.sender_id===currentUser.id);const received=rows.filter(r=>r.status==='pending'&&r.receiver_id===currentUser.id);const section=(title,items,kind)=>`<h2>${title}</h2>${items.length?'<ul>'+items.map(r=>{const other=r.sender_id===currentUser.id?r.receiver:r.sender;return `<li><a href="/profile.html?id=${encodeURIComponent(other?.id||'')}">${escapeHTML(other?.username||'Player')}</a>${kind==='received'?` <button class="classic-button blue-button" data-friend-accept="${r.id}">Accept</button> <button class="classic-button" data-friend-reject="${r.id}">Reject</button>`:kind==='sent'?' <small>Request sent</small>':''}</li>`}).join('')+'</ul>':'<p>None yet.</p>'}`;host.innerHTML=section('Your Friends',accepted,'friends')+section('Incoming Requests',received,'received')+section('Sent Requests',sent,'sent');}else{const all=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]');const rows=all.filter(r=>r.from===currentUser.id||r.to===currentUser.id);const users=JSON.parse(localStorage.getItem('blockos_demo_users')||'{}');const nameFor=id=>Object.values(users).find(u=>String(u.id)===String(id))?.username||'Player';const section=(title,items,kind)=>`<h2>${title}</h2>${items.length?'<ul>'+items.map(r=>{const other=r.from===currentUser.id?r.to:r.from;return `<li>${escapeHTML(nameFor(other))}${kind==='received'?` <button class="classic-button blue-button" data-friend-accept="${r.id}">Accept</button> <button class="classic-button" data-friend-reject="${r.id}">Reject</button>`:kind==='sent'?' <small>Request sent</small>':''}</li>`}).join('')+'</ul>':'<p>None yet.</p>'}`;host.innerHTML=section('Your Friends',rows.filter(r=>r.status==='accepted'),'friends')+section('Incoming Requests',rows.filter(r=>r.status==='pending'&&r.to===currentUser.id),'received')+section('Sent Requests',rows.filter(r=>r.status==='pending'&&r.from===currentUser.id),'sent')}}
   document.addEventListener('click',async e=>{const accept=e.target.closest('[data-friend-accept]'),reject=e.target.closest('[data-friend-reject]');if(!accept&&!reject)return;const id=(accept||reject).dataset.friendAccept||(reject||accept).dataset.friendReject;const status=accept?'accepted':'rejected';if(client){const {error}=await client.from('friend_requests').update({status}).eq('id',id).eq('receiver_id',currentUser.id);if(error){toast('Could not update request: '+error.message);return}}else{const arr=JSON.parse(localStorage.getItem('blockos_demo_friend_requests')||'[]');const r=arr.find(x=>x.id===id&&x.to===currentUser.id);if(r)r.status=status;localStorage.setItem('blockos_demo_friend_requests',JSON.stringify(arr))}toast(accept?'Friend request accepted.':'Friend request rejected.');loadFriendsPage()});loadFriendsPage();
   if(client)client.auth.onAuthStateChange((event,session)=>{if(event==='INITIAL_SESSION')return;if(session){(async()=>{const {data:p}=await client.from('profiles').select('username').eq('id',session.user.id).maybeSingle();displayUser(session.user,p?.username||session.user.user_metadata?.username||session.user.email?.split('@')[0]);await loadAvatarInventory();loadCatalog().then(()=>renderItemDetail());await loadPublicProfile();await searchPeople($('peopleQuery')?.value.trim()||'');await loadFriendsPage()})()}else if(event==='SIGNED_OUT'){displayUser(null);currentEquipped={};bodyColors={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'};avatarRenderers.forEach(r=>r.update(bodyColors,{},catalogItems));loadAvatarInventory();loadPublicProfile();searchPeople();loadFriendsPage()}});refresh();
   const catalogSeed=[
@@ -114,7 +220,7 @@
     {id:'hat-winter',name:'Winter Beanie',category:'hat',description:'A rounded winter hat.',price:20,creator:'Blockos Ville'},
     {id:'hat-halo',name:'Golden Halo',category:'hat',description:'A floating golden ring.',price:35,creator:'Blockos Ville'}
   ];
-  let catalogItems=[...catalogSeed], selectedCatalogCategory='all', currentEquipped={}, bodyColors={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'}, avatarRenderers=[];
+  let catalogItems=[...catalogSeed], selectedCatalogCategory='all', currentEquipped={}, bodyColors={head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'}, avatarRenderers=[], publicProfileRenderer=null;
   let demoKey='blockos_guest_inventory', equippedKey='blockos_guest_equipped', colorKey='blockos_guest_body_colors', coinsKey='blockos_guest_coins';
   function demoInventory(){try{return JSON.parse(localStorage.getItem(demoKey)||'[]')}catch{return []}}
   function demoEquipped(){try{return JSON.parse(localStorage.getItem(equippedKey)||'{}')}catch{return {}}}
@@ -164,7 +270,28 @@
   async function buyItem(id){const item=catalogItems.find(x=>x.id===id);if(!item)return;if(client){if(!currentUser){toast('Please sign in to buy items.');openAuth('login');return}const {data,error}=await client.rpc('purchase_catalog_item',{p_item_id:id});if(error){toast(error.message);return}toast(data==='owned'?'You already own this item.':'Item purchased!')}else{const inv=demoInventory();if(inv.includes(id)){toast('You already own this item.');return}let coins=coinBalance();if(coins<Number(item.price)){toast('You do not have enough Blockos Coins.');return}coins-=Number(item.price);inv.push(id);localStorage.setItem(demoKey,JSON.stringify(inv));localStorage.setItem(coinsKey,String(coins));const sold=JSON.parse(localStorage.getItem('blockos_demo_sold')||'{}');sold[id]=(sold[id]||0)+1;localStorage.setItem('blockos_demo_sold',JSON.stringify(sold));toast('Purchased in demo mode; saved in this browser only.')}await loadCatalog();await loadAvatarInventory()}
   async function equipItem(id){const item=catalogItems.find(x=>x.id===id);if(!item)return;const owned=await getOwned();if(!owned.includes(id)){toast('You must buy this item first.');return}if(client&&currentUser){const {error}=await client.rpc('equip_catalog_item',{p_item_id:id});if(error){toast(error.message);return}}else{const eq=demoEquipped();eq[item.category]=id;localStorage.setItem(equippedKey,JSON.stringify(eq))}toast('Item equipped.');await loadAvatarInventory()}
   async function unequipCategory(cat){if(client&&currentUser){const {error}=await client.from('avatar_equipped').delete().eq('user_id',currentUser.id).eq('category',cat);if(error){toast(error.message);return}}else{const eq=demoEquipped();delete eq[cat];localStorage.setItem(equippedKey,JSON.stringify(eq))}await loadAvatarInventory()}
-  async function loadAvatarInventory(){const host=$('avatarInventory');const owned=await getOwned();currentEquipped=demoEquipped();if(client&&currentUser){const {data}=await client.from('avatar_equipped').select('category,item_id').eq('user_id',currentUser.id);currentEquipped=Object.fromEntries((data||[]).map(x=>[x.category,x.item_id]));const {data:p}=await client.from('profiles').select('body_colors').eq('id',currentUser.id).maybeSingle();if(p?.body_colors)bodyColors={...bodyColors,...p.body_colors}}else{try{bodyColors={...bodyColors,...JSON.parse(localStorage.getItem(colorKey)||'{}')}}catch{}}
+  async function loadAvatarInventory(){
+    const host=$('avatarInventory');
+    const requestedUserId=currentUser?.id||null;
+    if(!requestedUserId){
+      resetGuestAvatar();
+      if(host)host.innerHTML='<p>Sign in to see your wardrobe. <a href="/catalog.html">Shop the Catalog</a>.</p>';
+      return;
+    }
+    const owned=await getOwned();
+    if((currentUser?.id||null)!==requestedUserId)return;
+    currentEquipped={};
+    if(client){
+      const {data}=await client.from('avatar_equipped').select('category,item_id').eq('user_id',requestedUserId);
+      if((currentUser?.id||null)!==requestedUserId)return;
+      currentEquipped=Object.fromEntries((data||[]).map(x=>[x.category,x.item_id]));
+      const {data:p}=await client.from('profiles').select('body_colors').eq('id',requestedUserId).maybeSingle();
+      if((currentUser?.id||null)!==requestedUserId)return;
+      bodyColors={...DEFAULT_BODY_COLORS,...(p?.body_colors||{})};
+    }else{
+      currentEquipped=demoEquipped();
+      try{bodyColors={...DEFAULT_BODY_COLORS,...JSON.parse(localStorage.getItem(colorKey)||'{}')}}catch{bodyColors={...DEFAULT_BODY_COLORS}}
+    }
     const categories=['head','face','hat','tshirt','shirt','pants'];const label=$('avatarEquipped');if(label)label.innerHTML=categories.filter(c=>currentEquipped[c]).map(c=>{const i=catalogItems.find(x=>x.id===currentEquipped[c]);return i?`<div class="equipped-item"><b>${escapeHTML(c.toUpperCase())}</b> ${escapeHTML(i.name)} <button class="classic-button" data-remove="${c}">Remove</button></div>`:''}).join('')||'No items equipped yet.';
     if(host){host.innerHTML=owned.map(id=>{const i=catalogItems.find(x=>x.id===id);if(!i)return '';return `<article class="catalog-item inventory-item"><div class="item-icon">${iconMarkup(i)}</div><a class="item-name" href="/item.html?id=${encodeURIComponent(i.id)}">${escapeHTML(i.name)}</a><p>${escapeHTML(i.category.toUpperCase())}</p>${currentEquipped[i.category]===id?'<p class="owned">Equipped</p>':'<button class="classic-button blue-button" data-equip="'+escapeHTML(id)+'">Wear</button>'}</article>`}).join('')||'<p>Your wardrobe is empty. <a href="/catalog.html">Shop the Catalog</a>.</p>';host.querySelectorAll('[data-equip]').forEach(b=>b.addEventListener('click',()=>equipItem(b.dataset.equip)));host.querySelectorAll('.item-3d-preview').forEach(c=>makeItemPreview(c,c.dataset.preview));}label?.querySelectorAll('[data-remove]').forEach(b=>b.addEventListener('click',()=>unequipCategory(b.dataset.remove)));updateCoinLabels(await getCoins());avatarRenderers.forEach(r=>r.update(bodyColors,currentEquipped,catalogItems));}
   on('catalogSearchButton','click',loadCatalog);on('catalogSearch','keydown',e=>{if(e.key==='Enter')loadCatalog()});document.querySelectorAll('[data-category]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();const c=a.dataset.category;selectedCatalogCategory=c;document.querySelectorAll('[data-category]').forEach(x=>x.classList.toggle('selected',x===a));loadCatalog()}));document.querySelectorAll('[data-wardrobe]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();const cat=a.dataset.wardrobe;document.querySelectorAll('#avatarInventory .inventory-item').forEach(card=>{card.style.display=cat==='all'||card.querySelector('p')?.textContent===cat.toUpperCase()?'':'none'})}));
@@ -242,7 +369,7 @@
   on('lobbyChatForm','submit',async e=>{e.preventDefault();const input=$('lobbyChatInput'),textValue=input?.value.trim();if(!textValue)return;if(!lobbyChannel||!lobbyJoined){toast('Join a lobby before chatting.');return}if(textValue.length>240){toast('Messages must be 240 characters or less.');return}await lobbyChannel.send({type:'broadcast',event:'chat',payload:{username:lobbyName(),text:textValue,at:new Date().toISOString()}});addLobbyMessage({username:lobbyName(),text:textValue});input.value='';});
   window.addEventListener('beforeunload',()=>{if(lobbyChannel&&client)client.removeChannel(lobbyChannel)});
 
-  makeAvatar($('heroAvatar'));makeAvatar($('profileAvatar'));makeAvatar($('avatarEditor'));loadCatalog().then(()=>renderItemDetail());loadAvatarInventory();
+  makeAvatar($('heroAvatar'));publicProfileRenderer=makeAvatar($('profileAvatar'),false);makeAvatar($('avatarEditor'));loadCatalog().then(()=>renderItemDetail());loadAvatarInventory();
 })();
 
 
