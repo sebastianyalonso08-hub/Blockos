@@ -6,7 +6,7 @@
   document.body.classList.add('auth-required');
   if(modal){modal.classList.remove('hidden');document.body.style.overflow='hidden';}
   const cfg=window.BLOCKOS_CONFIG||{};
-  if(window.supabase){try{client=window.supabase.createClient()}catch(e){console.error(e)}}
+  if(window.blockosClient){try{client=window.blockosClient.createClient()}catch(e){console.error(e)}}
   const on=(id,event,fn)=>$(id)?.addEventListener(event,fn);
   function setMessage(s,error=false){if(message){message.textContent=s;message.classList.toggle('error',error)}}
   function toast(s){const t=$('toast');t.textContent=s;t.classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.classList.add('hidden'),3500)}
@@ -50,15 +50,23 @@
       displayUser(null);
       openAuth('signup');
     }
-    // A failing page request must not leave another page permanently in "Loading".
+    // Load dependencies in order: avatar/profile rendering uses the catalog's
+    // item metadata, so it must not race the catalog request.
     const tasks=[
-      ['catalog',()=>loadCatalog().then(()=>renderItemDetail())],
+      ['catalog',async()=>{await loadCatalog();renderItemDetail()}],
       ['avatar',()=>loadAvatarInventory()],
       ['profile',()=>loadPublicProfile()],
       ['people',()=>searchPeople($('peopleQuery')?.value.trim()||'')],
       ['friends',()=>loadFriendsPage()]
     ];
-    await Promise.all(tasks.map(async([name,fn])=>{try{await fn()}catch(error){console.error(name+' page load failed:',error);const targets={catalog:'catalogItems',avatar:'avatarInventory',profile:'publicProfile',people:'peopleResult',friends:'friendsContent'};const target=$(targets[name]);if(target)target.textContent='Could not load this section. Please try again.'}}));
+    for(const [name,fn] of tasks){
+      try{await fn()}catch(error){
+        console.error(name+' page load failed:',error);
+        const targets={catalog:'catalogItems',avatar:'avatarInventory',profile:'publicProfile',people:'peopleResult',friends:'friendsContent'};
+        const target=$(targets[name]);
+        if(target)target.textContent='Could not load this section. Please try again.';
+      }
+    }
     if(!currentUser)openAuth('signup');
   }
   form?.addEventListener('submit',async e=>{
@@ -378,12 +386,12 @@
     function resize(){const r=stage.getBoundingClientRect();renderer.setSize(Math.max(1,r.width),Math.max(1,r.height),false);camera.aspect=Math.max(1,r.width)/Math.max(1,r.height);camera.updateProjectionMatrix()}new ResizeObserver(resize).observe(stage);resize();renderer.domElement.style.touchAction='pan-y';renderer.domElement.addEventListener('pointerdown',e=>{down=true;last=e.clientX;renderer.domElement.setPointerCapture(e.pointerId)});renderer.domElement.addEventListener('pointermove',e=>{if(down){rot+=(e.clientX-last)*.012;last=e.clientX;rig.rotation.y=rot}});renderer.domElement.addEventListener('pointerup',()=>down=false);renderer.domElement.addEventListener('pointercancel',()=>down=false);function frame(){renderer.render(scene,camera);requestAnimationFrame(frame)}frame();const api={update};if(registerForCurrentUser)avatarRenderers.push(api);update(registerForCurrentUser?bodyColors:{head:'#ffcc33',torso:'#1479bd',leftArm:'#ffcc33',rightArm:'#ffcc33',leftLeg:'#39834b',rightLeg:'#39834b'},registerForCurrentUser?currentEquipped:{},catalogItems);return api;
   }
 
-  // Early multiplayer foundation: Supabase Realtime Presence + Broadcast lobby.
+  // Multiplayer lobby placeholder; the Go backend does not expose realtime channels yet.
   let lobbyChannel=null, lobbyJoined=false;
   function lobbyName(){return currentUser?.user_metadata?.username||currentUser?.email?.split('@')[0]||'Player';}
   function renderLobbyPlayers(state){const host=$('lobbyPlayers');if(!host)return;const players=[];for(const key of Object.keys(state||{})){for(const p of state[key]||[])players.push(p)}host.innerHTML=players.length?players.map(p=>`<li><span class="presence-dot"></span>${escapeHTML(p.username||'Player')}${p.room?` <small>— ${escapeHTML(p.room)}</small>`:''}</li>`).join(''):'<li>No players online in this lobby yet.</li>';const count=$('lobbyPlayerCount');if(count)count.textContent=String(players.length);}
   function addLobbyMessage(msg){const host=$('lobbyChatMessages');if(!host)return;const row=document.createElement('p');row.className='lobby-chat-line';const who=document.createElement('b');who.textContent=(msg.username||'Player')+': ';const body=document.createElement('span');body.textContent=msg.text||'';row.append(who,body);host.appendChild(row);host.scrollTop=host.scrollHeight;}
-  async function joinLobby(){const status=$('lobbyStatus');if(!status)return;if(!currentUser){status.textContent='Please log in to join multiplayer.';openAuth('login');return}if(!client){status.textContent='Cross-device multiplayer chat is not implemented in this backend yet.';return}if(lobbyJoined)return;const room=$('lobbyRoom')?.value||'Main Lobby';status.textContent='Connecting to '+room+'…';lobbyChannel=client.channel('blockos-lobby-'+room,{config:{presence:{key:currentUser.id||lobbyName()},broadcast:{self:false}}});lobbyChannel.on('presence',{event:'sync'},()=>renderLobbyPlayers(lobbyChannel.presenceState()));lobbyChannel.on('broadcast',{event:'chat'},({payload})=>addLobbyMessage(payload));lobbyChannel.subscribe(async state=>{if(state!=='SUBSCRIBED')return;await lobbyChannel.track({user_id:currentUser.id,username:lobbyName(),room,joined_at:new Date().toISOString()});lobbyJoined=true;status.textContent='Connected to '+room+'. You are in the lobby.';$('joinLobby')?.classList.add('hidden');$('leaveLobby')?.classList.remove('hidden');});}
+  async function joinLobby(){const status=$('lobbyStatus');if(!status)return;if(!currentUser){status.textContent='Please log in to join multiplayer.';openAuth('login');return}if(!client||typeof client.channel!=='function'){status.textContent='The multiplayer lobby is not connected to the Go backend yet.';return}if(lobbyJoined)return;const room=$('lobbyRoom')?.value||'Main Lobby';status.textContent='Connecting to '+room+'…';lobbyChannel=client.channel('blockos-lobby-'+room,{config:{presence:{key:currentUser.id||lobbyName()},broadcast:{self:false}}});lobbyChannel.on('presence',{event:'sync'},()=>renderLobbyPlayers(lobbyChannel.presenceState()));lobbyChannel.on('broadcast',{event:'chat'},({payload})=>addLobbyMessage(payload));lobbyChannel.subscribe(async state=>{if(state!=='SUBSCRIBED')return;await lobbyChannel.track({user_id:currentUser.id,username:lobbyName(),room,joined_at:new Date().toISOString()});lobbyJoined=true;status.textContent='Connected to '+room+'. You are in the lobby.';$('joinLobby')?.classList.add('hidden');$('leaveLobby')?.classList.remove('hidden');});}
   async function leaveLobby(){if(lobbyChannel){try{await lobbyChannel.untrack();await client.removeChannel(lobbyChannel)}catch(e){console.warn(e)}lobbyChannel=null}lobbyJoined=false;renderLobbyPlayers({});if($('lobbyStatus'))$('lobbyStatus').textContent='You left the lobby.';$('joinLobby')?.classList.remove('hidden');$('leaveLobby')?.classList.add('hidden');}
   on('joinLobby','click',joinLobby);on('leaveLobby','click',leaveLobby);
   on('lobbyChatForm','submit',async e=>{e.preventDefault();const input=$('lobbyChatInput'),textValue=input?.value.trim();if(!textValue)return;if(!lobbyChannel||!lobbyJoined){toast('Join a lobby before chatting.');return}if(textValue.length>240){toast('Messages must be 240 characters or less.');return}await lobbyChannel.send({type:'broadcast',event:'chat',payload:{username:lobbyName(),text:textValue,at:new Date().toISOString()}});addLobbyMessage({username:lobbyName(),text:textValue});input.value='';});

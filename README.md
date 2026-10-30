@@ -41,3 +41,13 @@ This update focuses on account identity, authentication/session handling, and co
 - The frontend loads catalog, avatar, profile, people, and friends independently so a failed section does not leave the other sections stuck in a loading state.
 
 The classic HTML structure and CSS styling are retained. Automated checks: `go test ./...`, `go test -race ./...`, and `node --check public/app.js`.
+
+
+## V27 connection fixes
+
+- The browser now uses the named first-party `blockosClient` API bridge; it does not require Supabase or external account configuration.
+- Failed sign-up or login requests no longer clear an existing browser session hint/token.
+- A failed logout request no longer tells the page that logout succeeded.
+- Initial page loading now awaits catalog data before loading avatar inventory and profile renderers that depend on catalog item metadata.
+- The multiplayer page now states that its realtime lobby is not connected to the Go backend instead of suggesting Supabase setup.
+- Verification performed for this archive: Go tests, Go race tests, JavaScript syntax checks, and HTTP smoke tests for signup IDs, profile updates, catalog listing, and friend-request visibility.
